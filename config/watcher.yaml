@@ -1,0 +1,60 @@
+# SMB3 file watcher daemon configuration
+# See WATCHER_PLAN.md for architecture details.
+
+server_root: /ICFO/groups/NOE
+db_path: /opt/qnoe-agent/memory/watcher.db
+
+# Folders watched directly (one FolderWatcher thread each)
+watch_toplevel:
+  - Lab_Instruments
+  - Manuscripts
+  - Meetings
+  - "Papers & Books"
+  - Posters
+  - Presentation
+  - Presentations
+  - Spectromag
+  - "Theses & reports"
+
+# Folders whose children each get their own FolderWatcher (via SubfolderManager)
+watch_subfolder_level:
+  - Projects
+  - Notebook
+  - Notebooks
+  - Setups
+  - Personal
+  - Fabrication
+
+# Subfolders to exclude entirely (relative to server_root)
+exclude_subfolders:
+  - Projects/QDphotodetector
+  - Notebook/TopoNanop
+  - Notebook/HighQuality_Plamons
+  - Notebook/Low_temperature_polaritons
+  - Notebook/mid-IR_Plasmonic_detector_Seb
+  - "Notebook/Graphene Optomechanics"
+
+# File extensions to watch
+supported_extensions:
+  docs:
+    - .pdf
+    - .docx
+    - .pptx
+    - .md
+    - .rst
+    - .py
+    - .ipynb
+  dbs:
+    - .db
+
+# Seconds to wait after CIFS_IOC_NOTIFY before scanning (batch rapid changes)
+scan_cooldown_seconds: 5
+
+# Seconds a file must be unchanged before marking stable in change_queue
+stationary_seconds: 1800  # 30 minutes
+
+# CacheRebuilder runs every N hours (also triggered immediately on remount)
+full_rebuild_interval_hours: 24
+
+# Docling memory safety: skip files larger than this (bytes)
+docling_max_file_bytes: 52428800  # 50 MB

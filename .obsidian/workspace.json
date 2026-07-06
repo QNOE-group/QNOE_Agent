@@ -1,0 +1,211 @@
+{
+  "main": {
+    "id": "18c4af5f8671f1b6",
+    "type": "split",
+    "children": [
+      {
+        "id": "bf590e5241cc09b0",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "b6141d821818f9db",
+            "type": "leaf",
+            "state": {
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "New tab"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "181f58598fd83f69",
+    "type": "split",
+    "children": [
+      {
+        "id": "95c8781a0bb13107",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "5d25d936f36b92d4",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "ceb4ce7a557975ee",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "781f19200a052e21",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "2332e8a1427a4b2c",
+    "type": "split",
+    "children": [
+      {
+        "id": "a4bd5952ee0002ac",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "8a995c30f8aa8d21",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "OPENSHELL_DESIGN_PROPOSAL.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for OPENSHELL_DESIGN_PROPOSAL"
+            }
+          },
+          {
+            "id": "4c1b6ec55ea815bc",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "OPENSHELL_DESIGN_PROPOSAL.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from OPENSHELL_DESIGN_PROPOSAL"
+            }
+          },
+          {
+            "id": "9e1ceff08219031c",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "bfa70b87316df624",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "6345fa52a7c50ea6",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "OPENSHELL_DESIGN_PROPOSAL.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of OPENSHELL_DESIGN_PROPOSAL"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "b6141d821818f9db",
+  "lastOpenFiles": [
+    "tmp/subprofile_config_v3.yaml",
+    "tmp/subprofile_config_v2.yaml",
+    "SETUP_LOG.md.tmp.25744.1782980251212",
+    "TODO.md.tmp.25744.1782980215330",
+    "tmp/subprofile_config.yaml",
+    "tmp/subprofile_config.yaml.tmp.32568.1782979084659",
+    "tmp",
+    "memory/infrastructure.md.tmp.32568.1782978885148",
+    "memory/infrastructure.md.tmp.32568.1782978880151",
+    "memory/infrastructure.md.tmp.32568.1782978877044",
+    "memory/decisions.md.tmp.32568.1782978870020",
+    "memory/user-preferences.md",
+    "memory/deploy-patterns.md",
+    "memory/hermes-migration.md",
+    "memory/mistakes.md",
+    "memory/decisions.md",
+    "memory/ingestion.md",
+    "memory/agent-code.md",
+    "memory/infrastructure.md",
+    "HOME.md",
+    "REPO_MAPPING.md",
+    "runbook/RUNBOOK.md",
+    "DGX_SETUP.md",
+    "OPENSHELL_DESIGN_PROPOSAL.md",
+    "benchmark/benchmark_scores.md",
+    "USER_MANUAL.md",
+    "SETUP_LOG.md"
+  ]
+}

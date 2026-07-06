@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>QNOE Lab AI Agent — Architecture</title>
+<style>
+  body { font-family: sans-serif; background: #f8f8f6; display: flex; justify-content: center; padding: 32px 16px; }
+  svg { max-width: 860px; width: 100%; }
+  .box { cursor: pointer; }
+  .box:hover rect { opacity: 0.85; }
+  .label-sm { font-size: 12px; fill: #555; }
+  .label-md { font-size: 13px; fill: #222; font-weight: 500; }
+  .label-sub { font-size: 11px; fill: #666; }
+  .label-dgx { font-size: 11px; fill: #999; }
+  .legend-label { font-size: 11px; fill: #666; }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 860 620" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>QNOE Lab AI Agent — Full System Architecture</title>
+<defs>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arr-bidir" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- ── TEAMS (external) ── -->
+<g class="box">
+  <rect x="330" y="14" width="200" height="42" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.8"/>
+  <text class="label-md" x="430" y="35" text-anchor="middle" dominant-baseline="central">Microsoft Teams</text>
+  <text class="label-sub" x="430" y="49" text-anchor="middle" dominant-baseline="central">primary user interface</text>
+</g>
+
+<!-- Teams → Orchestrator arrow -->
+<line x1="430" y1="56" x2="430" y2="104" stroke="#888" stroke-width="1" marker-end="url(#arr)"/>
+<text class="label-sm" x="440" y="72" dominant-baseline="central">Teams API ↕</text>
+
+<!-- ── DGX SPARK CONTAINER ── -->
+<rect x="24" y="84" width="812" height="408" rx="14" fill="none" stroke="#ccc" stroke-width="1.2" stroke-dasharray="7 4"/>
+<text class="label-dgx" x="40" y="100">DGX Spark — on-premises</text>
+
+<!-- ── ORCHESTRATOR ── -->
+<g class="box">
+  <rect x="280" y="108" width="300" height="54" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+  <text class="label-md" x="430" y="127" text-anchor="middle" dominant-baseline="central" fill="#3C3489">Orchestrator agent</text>
+  <text class="label-sub" x="430" y="147" text-anchor="middle" dominant-baseline="central">routing · memory · approvals</text>
+</g>
+
+<!-- Fan stem + bar -->
+<line x1="430" y1="162" x2="430" y2="178" stroke="#bbb" stroke-width="0.8" fill="none"/>
+<line x1="100" y1="178" x2="760" y2="178" stroke="#bbb" stroke-width="0.8" fill="none"/>
+<!-- 6 drops -->
+<line x1="100" y1="178" x2="100" y2="188" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+<line x1="232" y1="178" x2="232" y2="188" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+<line x1="364" y1="178" x2="364" y2="188" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+<line x1="496" y1="178" x2="496" y2="188" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+<line x1="628" y1="178" x2="628" y2="188" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+<line x1="760" y1="178" x2="760" y2="188" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+
+<!-- ── SUB-AGENTS (6) ── y=188 h=40 -->
+<!-- QED x=55 w=90 center=100 -->
+<g class="box">
+  <rect x="55" y="188" width="90" height="40" rx="6" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+  <text class="label-md" x="100" y="208" text-anchor="middle" dominant-baseline="central" fill="#085041">QED</text>
+</g>
+<!-- Supercon x=187 w=90 center=232 -->
+<g class="box">
+  <rect x="187" y="188" width="90" height="40" rx="6" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+  <text class="label-md" x="232" y="208" text-anchor="middle" dominant-baseline="central" fill="#085041">Supercon.</text>
+</g>
+<!-- Photocurr x=319 w=90 center=364 -->
+<g class="box">
+  <rect x="319" y="188" width="90" height="40" rx="6" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+  <text class="label-md" x="364" y="208" text-anchor="middle" dominant-baseline="central" fill="#085041">Photocurr.</text>
+</g>
+<!-- QTM x=451 w=90 center=496 -->
+<g class="box">
+  <rect x="451" y="188" width="90" height="40" rx="6" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+  <text class="label-md" x="496" y="208" text-anchor="middle" dominant-baseline="central" fill="#085041">QTM</text>
+</g>
+<!-- QSIM x=583 w=90 center=628 -->
+<g class="box">
+  <rect x="583" y="188" width="90" height="40" rx="6" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+  <text class="label-md" x="628" y="208" text-anchor="middle" dominant-baseline="central" fill="#085041">QSIM</text>
+</g>
+<!-- XCHIRAL x=715 w=90 center=760 -->
+<g class="box">
+  <rect x="715" y="188" width="90" height="40" rx="6" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+  <text class="label-md" x="760" y="208" text-anchor="middle" dominant-baseline="central" fill="#085041">XCHIRAL</text>
+</g>
+
+<!-- Sub-agents → Model -->
+<line x1="430" y1="228" x2="430" y2="256" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+<text class="label-sm" x="440" y="243" dominant-baseline="central">shared</text>
+
+<!-- ── MODEL ── y=256 h=54 -->
+<g class="box">
+  <rect x="204" y="256" width="452" height="54" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.8"/>
+  <text class="label-md" x="430" y="276" text-anchor="middle" dominant-baseline="central" fill="#633806">Hermes 3 70B</text>
+  <text class="label-sub" x="430" y="296" text-anchor="middle" dominant-baseline="central">local inference via vLLM · INT8 on 128 GB unified memory</text>
+</g>
+
+<!-- Model ↔ Memory (bidirectional) -->
+<line x1="430" y1="310" x2="430" y2="336" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)" marker-start="url(#arr-bidir)"/>
+
+<!-- ── MEMORY ROW ── y=336 h=52 -->
+<!-- Qdrant x=44 w=228 center=158 -->
+<g class="box">
+  <rect x="44" y="336" width="228" height="52" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+  <text class="label-md" x="158" y="355" text-anchor="middle" dominant-baseline="central" fill="#085041">Qdrant</text>
+  <text class="label-sub" x="158" y="374" text-anchor="middle" dominant-baseline="central">semantic / RAG · 7 collections</text>
+</g>
+<!-- SQLite x=316 w=228 center=430 -->
+<g class="box">
+  <rect x="316" y="336" width="228" height="52" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+  <text class="label-md" x="430" y="355" text-anchor="middle" dominant-baseline="central" fill="#085041">SQLite</text>
+  <text class="label-sub" x="430" y="374" text-anchor="middle" dominant-baseline="central">episodic memory · audit log</text>
+</g>
+<!-- Skill registry x=588 w=228 center=702 -->
+<g class="box">
+  <rect x="588" y="336" width="228" height="52" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+  <text class="label-md" x="702" y="355" text-anchor="middle" dominant-baseline="central" fill="#085041">Skill registry</text>
+  <text class="label-sub" x="702" y="374" text-anchor="middle" dominant-baseline="central">versioned Python tool packages</text>
+</g>
+
+<!-- Memory → Tools -->
+<line x1="430" y1="388" x2="430" y2="410" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+
+<!-- ── TOOLS ROW ── y=410 h=40 -->
+<!-- Shell executor x=44 w=228 center=158 -->
+<g class="box">
+  <rect x="44" y="410" width="228" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+  <text class="label-md" x="158" y="430" text-anchor="middle" dominant-baseline="central" fill="#444441">Shell executor</text>
+</g>
+<!-- GitHub API x=316 w=228 center=430 -->
+<g class="box">
+  <rect x="316" y="410" width="228" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+  <text class="label-md" x="430" y="430" text-anchor="middle" dominant-baseline="central" fill="#444441">GitHub API</text>
+</g>
+<!-- Jupyter kernel x=588 w=228 center=702 -->
+<g class="box">
+  <rect x="588" y="410" width="228" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+  <text class="label-md" x="702" y="430" text-anchor="middle" dominant-baseline="central" fill="#444441">Jupyter kernel</text>
+</g>
+
+<!-- DGX container ends y=492 -->
+<!-- Tool → External arrows (exit DGX) -->
+<line x1="158" y1="450" x2="158" y2="520" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+<line x1="430" y1="450" x2="430" y2="520" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+<line x1="702" y1="450" x2="702" y2="520" stroke="#aaa" stroke-width="0.8" marker-end="url(#arr)"/>
+
+<!-- ── EXTERNAL RESOURCES ── y=520 h=44 -->
+<g class="box">
+  <rect x="44" y="520" width="228" height="44" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.8"/>
+  <text class="label-md" x="158" y="542" text-anchor="middle" dominant-baseline="central" fill="#042C53">Lab data server</text>
+</g>
+<g class="box">
+  <rect x="316" y="520" width="228" height="44" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.8"/>
+  <text class="label-md" x="430" y="542" text-anchor="middle" dominant-baseline="central" fill="#042C53">QNOE GitHub org</text>
+</g>
+<g class="box">
+  <rect x="588" y="520" width="228" height="44" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.8"/>
+  <text class="label-md" x="702" y="542" text-anchor="middle" dominant-baseline="central" fill="#042C53">Literature store</text>
+</g>
+
+<!-- LEGEND -->
+<rect x="44" y="582" width="10" height="10" rx="2" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text class="legend-label" x="58" y="587" dominant-baseline="central">Orchestrator</text>
+<rect x="170" y="582" width="10" height="10" rx="2" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.8"/>
+<text class="legend-label" x="184" y="587" dominant-baseline="central">Sub-agents · Memory</text>
+<rect x="350" y="582" width="10" height="10" rx="2" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.8"/>
+<text class="legend-label" x="364" y="587" dominant-baseline="central">Inference</text>
+<rect x="440" y="582" width="10" height="10" rx="2" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+<text class="legend-label" x="454" y="587" dominant-baseline="central">Tools</text>
+<rect x="516" y="582" width="10" height="10" rx="2" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.8"/>
+<text class="legend-label" x="530" y="587" dominant-baseline="central">External</text>
+</svg>
+</body>
+</html>

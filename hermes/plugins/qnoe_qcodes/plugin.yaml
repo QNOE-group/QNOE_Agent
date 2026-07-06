@@ -1,0 +1,4 @@
+name: qnoe_qcodes
+description: "QNOE QCoDeS measurement registry — search experiment runs by sample, experiment, date"
+version: "0.1.0"
+author: "QNOE Lab"

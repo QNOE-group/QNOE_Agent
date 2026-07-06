@@ -1,0 +1,14 @@
+[Unit]
+Description=vLLM Inference Server (Hermes 3 70B AWQ)
+After=network.target
+
+[Service]
+User=qnoe-ai
+Environment=PATH=/opt/qnoe-agent/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/qnoe-agent/scripts/start_vllm.sh
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

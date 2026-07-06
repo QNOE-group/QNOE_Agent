@@ -1,0 +1,65 @@
+# repo_collections.yaml
+# Maps GitHub repo names to Qdrant collections.
+#
+# Rules are matched top-to-bottom; first match wins.
+# Each rule is a list of substrings — if ANY substring appears in the repo name
+# (case-insensitive), the repo goes to that collection.
+#
+# Repos that match no rule go to: group-wide (default)
+#
+# To add a new repo: either add its name as a substring under the right team,
+# or add a new explicit entry at the top of the list.
+
+collections:
+
+  qtm:
+    - QTM
+    - qtm
+
+  photocurrent:
+    - photocurrent
+    - SLG
+    - MIT_BLG       # MIT_BLG-hBN_XW* repos → photocurrent (must come before BLG in qed)
+    - Bloch         # Bloch equations simulation
+    - Gr_Optimizer  # Graphene optimizer
+
+  qed:
+    - QED
+    - qed
+    - BLG           # BLG-QED and similar (MIT_BLG already caught above)
+    - FTIR-L205     # FTIR-L205-RapidScan
+    - Elisa         # Elisa-codes — Cavity QED analysis
+    - cavity
+
+  superconductivity:
+    - BSCCO
+    - supercon
+    - Supercon
+
+  qsim:
+    - QSIM
+    - qsim
+    - Kagome
+    - kagome
+
+  xchiral:
+    - XCHIRAL
+    - xchiral
+    - chiral
+    - Chiral
+
+  group-wide:
+    - QNOE-group-info
+    - group-info
+    - onboarding
+    - tutorial
+    - docs
+    - shared
+    - tools
+
+# Default collection for repos that match none of the above
+default: group-wide
+
+# Repos to skip entirely (exact name match)
+exclude:
+  - SIM-Meep

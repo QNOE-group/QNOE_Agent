@@ -1,0 +1,8 @@
+name: teams_polling
+kind: platform
+description: "Microsoft Teams polling adapter — Graph API polling (no webhooks required)"
+version: "0.1.0"
+author: "QNOE Lab"
+pip_dependencies:
+  - msal
+  - aiohttp

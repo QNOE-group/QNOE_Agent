@@ -1,0 +1,28 @@
+# Credentials & secrets — never commit
+secrets/
+SSHKey.txt
+SSHKey.txt.pub
+*.env
+
+# Temporary files
+tmp/
+tmp_*.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Claude Code local overrides (machine-specific)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/plans/
+
+# OS
+.DS_Store
+Thumbs.db

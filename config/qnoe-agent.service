@@ -1,0 +1,13 @@
+[Unit]
+Description=QNOE Lab Agent (OpenShell sandbox)
+After=network.target docker.service openshell-gateway.service vllm.service
+Requires=docker.service openshell-gateway.service vllm.service
+
+[Service]
+User=qnoe-ai
+ExecStart=/opt/qnoe-agent/scripts/start_agent.sh
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

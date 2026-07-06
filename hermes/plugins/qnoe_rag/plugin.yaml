@@ -1,0 +1,7 @@
+name: qnoe_rag
+description: "QNOE lab RAG retrieval — Qdrant + nomic-embed + cross-encoder reranker"
+version: "0.1.0"
+author: "QNOE Lab"
+pip_dependencies:
+  - qdrant-client
+  - sentence-transformers

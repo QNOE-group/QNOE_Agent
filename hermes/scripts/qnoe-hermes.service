@@ -1,0 +1,16 @@
+[Unit]
+Description=QNOE Lab Agent (Hermes Gateway)
+After=network.target docker.service vllm.service
+Requires=vllm.service
+
+[Service]
+User=qnoe-ai
+Group=qnoe-ai
+ExecStart=/opt/qnoe-agent/scripts/start_hermes.sh
+Restart=on-failure
+RestartSec=30
+# Give Hermes time to load models on startup
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

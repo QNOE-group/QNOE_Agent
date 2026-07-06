@@ -1,0 +1,34 @@
+auth:
+  app_id: "108a03c5-e265-4ab6-a5ea-9c902fd527d4"
+  tenant_id: "f78a768a-22ae-4432-9eb4-55ce4b73c8c3"
+  username_env: "SHAREPOINT_USERNAME"
+  password_env: "SHAREPOINT_PASSWORD"
+  scopes:
+    - "Sites.Read.All"
+    - "Files.Read.All"
+
+sites:
+  # "Twisted Materials - shared equipment and experiments" Teams group
+  # Only index the 3 science folders; exclude admin/logistics folders.
+  - name: "twisted-materials"
+    teams_group_id: "ac001f4d-8d8e-4de0-a4ec-72e90ea55416"
+    drives: ["Documents"]
+    collection: "group-wide"
+    exclude_folders:
+      - "General"
+      - "OneNote Uploads"
+      - "Optical elements"
+      - "Proteox"
+      - "Quotes"
+    max_file_mb: 50
+
+  # "NOE-Group" Teams group — index everything
+  - name: "noe-group"
+    teams_group_id: "26a94606-9938-47d7-bbb2-c38f29c1440e"
+    drives: ["Documents"]
+    collection: "group-wide"
+    exclude_folders: []
+    max_file_mb: 50
+
+temp_dir: "/tmp/qnoe-sharepoint/"   # files deleted immediately after chunking
+poll_interval_minutes: 30

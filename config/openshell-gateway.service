@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenShell Gateway
+After=docker.service
+Requires=docker.service
+
+[Service]
+User=qnoe-ai
+ExecStart=/opt/qnoe-agent/scripts/start_gateway.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
