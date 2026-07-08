@@ -15,7 +15,15 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
+from concurrent.futures import (
+    ProcessPoolExecutor as _PPE,
+    ThreadPoolExecutor as _TPE,
+    TimeoutError as _ChunkTimeout,
+    BrokenExecutor as _BrokenExecutor,
+    as_completed,
+)
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,12 +39,51 @@ from .sharepoint_client import (
     list_drive_items,
 )
 from .splitter import chunk_file
-from .embed import embed_documents
+from .embed import embed_documents, embed_sparse
 from .run_ingest import _ensure_collection, _upsert_chunks, QDRANT_URL
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_EXTENSIONS = {".py", ".ipynb", ".md", ".txt", ".rst", ".pdf", ".pptx", ".docx"}
+SUPPORTED_EXTENSIONS = {".py", ".ipynb", ".md", ".rst", ".pdf", ".pptx", ".docx"}
+
+# Max seconds to spend chunking a single file (covers Docling PDF/DOCX/PPTX processing).
+FILE_CHUNK_TIMEOUT = int(os.environ.get("SP_FILE_CHUNK_TIMEOUT", "300"))
+
+# Parallelism settings
+THREAD_WORKERS = int(os.environ.get("SP_THREAD_WORKERS", "4")) # concurrent download/embed threads
+
+# Listing cache: saves the full item list to disk so restarts skip the listing phase
+LISTING_CACHE_DIR = Path(os.environ.get("SP_LISTING_CACHE_DIR", "/tmp/qnoe-sp-listing-cache/"))
+LISTING_CACHE_MAX_AGE_H = int(os.environ.get("SP_LISTING_CACHE_MAX_AGE_H", "999999"))  # never expires by default
+
+def _chunk_file_safe(dest: Path, site_name: str) -> list:
+    """Run chunk_file in a fresh isolated subprocess.
+
+    One crash/timeout only affects this one file — no cascade to other threads.
+    """
+    with _PPE(max_workers=1) as ex:
+        return ex.submit(chunk_file, dest, site_name).result(timeout=FILE_CHUNK_TIMEOUT)
+
+class _SharedToken:
+    """Thread-safe token holder that auto-refreshes before expiry."""
+
+    def __init__(self, token: str, auth_cfg: dict) -> None:
+        self._token = token
+        self._auth_cfg = auth_cfg
+        self._ts = time.monotonic()
+        self._lock = threading.Lock()
+
+    def get(self) -> str:
+        with self._lock:
+            if time.monotonic() - self._ts >= TOKEN_REFRESH_SECONDS:
+                try:
+                    self._token = authenticate(self._auth_cfg)
+                    self._ts = time.monotonic()
+                    logger.info("SP token refreshed (worker thread)")
+                except Exception as exc:
+                    logger.warning("SP token refresh failed, using old token: %s", exc)
+            return self._token
+
 
 SP_CONFIG_PATH = os.environ.get(
     "SHAREPOINT_CONFIG", "/opt/qnoe-agent/config/sharepoint.yaml"
@@ -45,6 +92,51 @@ SP_MANIFEST_DB = os.environ.get(
     "SP_MANIFEST_DB", "/opt/qnoe-agent/memory/sharepoint.db"
 )
 WATCHER_DB = os.environ.get("WATCHER_DB", "/opt/qnoe-agent/memory/watcher.db")
+
+
+# ---------------------------------------------------------------------------
+# Listing cache (avoids re-listing 900K items on restart)
+# ---------------------------------------------------------------------------
+
+def _listing_cache_path(drive_id: str) -> Path:
+    safe = drive_id.replace("!", "_").replace("/", "_")[:50]
+    return LISTING_CACHE_DIR / f"{safe}.json"
+
+
+def _load_listing_cache(drive_id: str) -> "tuple[list, str] | None":
+    p = _listing_cache_path(drive_id)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text())
+        age_h = (time.time() - data["saved_at"]) / 3600
+        if age_h > LISTING_CACHE_MAX_AGE_H:
+            logger.info("Listing cache expired (%.1fh old), re-listing", age_h)
+            return None
+        logger.info(
+            "Loaded listing cache: %d items (%.1fh old)", len(data["items"]), age_h
+        )
+        return data["items"], data["delta_link"]
+    except Exception as exc:
+        logger.warning("Could not read listing cache: %s", exc)
+        return None
+
+
+def _save_listing_cache(drive_id: str, items: list, delta_link: str) -> None:
+    try:
+        LISTING_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _listing_cache_path(drive_id).write_text(json.dumps({
+            "saved_at": time.time(),
+            "delta_link": delta_link,
+            "items": items,
+        }))
+        logger.info("Listing cache saved: %d items", len(items))
+    except Exception as exc:
+        logger.warning("Could not save listing cache: %s", exc)
+
+
+def _clear_listing_cache(drive_id: str) -> None:
+    _listing_cache_path(drive_id).unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +304,19 @@ def _process_item(
     site_cfg: dict,
     drive_id: str,
     temp_dir: Path,
-    token: str,
+    token: "str | _SharedToken",
     client: QdrantClient,
-    sp_conn: sqlite3.Connection,
+    sp_conn: "sqlite3.Connection | None" = None,
 ) -> bool:
-    """Download → chunk → embed → upsert → delete temp. Returns True if indexed."""
+    """Download → chunk → embed → upsert → delete temp. Returns True if indexed.
+
+    If sp_conn is None, opens its own connection (safe to call from threads).
+    token may be a plain str or a _SharedToken (used by parallel full_sync).
+    """
+    own_conn = sp_conn is None
+    if own_conn:
+        sp_conn = _get_sp_manifest_conn()
+    tok = token.get() if isinstance(token, _SharedToken) else token
     name = item.get("name", "")
     ext = Path(name).suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
@@ -244,8 +344,14 @@ def _process_item(
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        download_to_temp(drive_id, item_id, dest, token)
-        chunks = chunk_file(dest, site_cfg["name"])
+        download_to_temp(drive_id, item_id, dest, tok)
+        try:
+            chunks = _chunk_file_safe(dest, site_cfg["name"])
+        except (_ChunkTimeout, _BrokenExecutor):
+            logger.error(
+                "SP chunk_file timed out or worker crashed, skipping: %s", name
+            )
+            return False
         if not chunks:
             return False
 
@@ -257,11 +363,12 @@ def _process_item(
 
         texts = [c["text"] for c in chunks]
         vectors = embed_documents(texts)
+        sparse_vecs = embed_sparse(texts)
 
         collection = site_cfg["collection"]
         _ensure_collection(client, collection)
         _delete_old_chunks(client, sp_conn, item_id)
-        point_ids = _upsert_chunks(client, collection, chunks, vectors)
+        point_ids = _upsert_chunks(client, collection, chunks, vectors, sparse_vecs)
         _record_item(
             sp_conn, item_id, rel_path, site_cfg["name"],
             drive_id, etag, collection, point_ids,
@@ -273,6 +380,8 @@ def _process_item(
         logger.error("SP processing failed for %s: %s", name, exc)
         return False
     finally:
+        if own_conn:
+            sp_conn.close()
         dest.unlink(missing_ok=True)
 
 
@@ -312,7 +421,7 @@ def _fresh_token(cfg: dict, token: str, token_ts: float) -> tuple[str, float]:
     return token, token_ts
 
 
-def full_sync(site_cfg: dict, cfg: dict, token: str) -> dict:
+def full_sync(site_cfg: dict, cfg: dict, token: str, skip_files: int = 0) -> dict:
     """Enumerate all items and index each one. Establishes/refreshes delta baseline.
 
     Uses the Graph delta endpoint for listing (single paginated stream) instead of
@@ -324,44 +433,72 @@ def full_sync(site_cfg: dict, cfg: dict, token: str) -> dict:
     client = QdrantClient(url=QDRANT_URL)
     sp_conn = _get_sp_manifest_conn()
     temp_dir = Path(cfg.get("temp_dir", "/tmp/qnoe-sharepoint/"))
-    stats = {"processed": 0, "skipped": 0, "errors": 0}
+    stats: dict = {"processed": 0, "skipped": 0, "errors": 0, "failed_files": []}
     token_ts = time.monotonic()
 
     drive_map = _resolve_drive_ids(site_cfg, token)
     for drive_name, drive_id in drive_map.items():
         logger.info("SP full sync: %s / %s", site_cfg["name"], drive_name)
 
-        # Use delta endpoint: returns all items + baseline link in one paginated stream.
-        # Save the delta link immediately so any later interruption falls back to delta.
-        try:
-            token, token_ts = _fresh_token(cfg, token, token_ts)
-            all_items, delta_link = get_delta(drive_id, None, token, auth_cfg=cfg["auth"])
-        except Exception as exc:
-            logger.error("SP full sync listing failed for %s/%s: %s", site_cfg["name"], drive_name, exc)
-            stats["errors"] += 1
-            continue
+        # Try listing cache first to skip the 15-min listing phase on restarts
+        cached = _load_listing_cache(drive_id)
+        if cached:
+            all_items, delta_link = cached
+        else:
+            try:
+                token, token_ts = _fresh_token(cfg, token, token_ts)
+                all_items, delta_link = get_delta(drive_id, None, token, auth_cfg=cfg["auth"])
+            except Exception as exc:
+                logger.error("SP full sync listing failed for %s/%s: %s", site_cfg["name"], drive_name, exc)
+                stats["errors"] += 1
+                continue
+            _save_listing_cache(drive_id, all_items, delta_link)
 
         file_items = [i for i in all_items if "file" in i and "deleted" not in i]
+        if skip_files > 0:
+            logger.info("SP: skipping first %d files (resume mode)", skip_files)
+            file_items = file_items[skip_files:]
         logger.info(
-            "SP: %d items found in %s / %s (%d files)",
+            "SP: %d items found in %s / %s (%d files to process)",
             len(all_items), site_cfg["name"], drive_name, len(file_items),
         )
 
-        # Save delta baseline now — if processing crashes, next run uses delta
+        # Save delta baseline before processing — crash-safe
         _save_delta_link(drive_id, delta_link)
         logger.info("SP delta baseline saved for %s / %s", site_cfg["name"], drive_name)
 
-        for item in file_items:
-            token, token_ts = _fresh_token(cfg, token, token_ts)
-            try:
-                ok = _process_item(item, site_cfg, drive_id, temp_dir, token, client, sp_conn)
-                if ok:
-                    stats["processed"] += 1
-                else:
-                    stats["skipped"] += 1
-            except Exception as exc:
-                logger.error("SP item error: %s", exc)
-                stats["errors"] += 1
+        # Create a shared token holder — each worker thread calls holder.get()
+        # which auto-refreshes when TOKEN_REFRESH_SECONDS have elapsed.
+        token, token_ts = _fresh_token(cfg, token, token_ts)
+        holder = _SharedToken(token, cfg["auth"])
+
+        def _submit(item: dict) -> bool:
+            return _process_item(item, site_cfg, drive_id, temp_dir, holder, client)
+
+        with _TPE(max_workers=THREAD_WORKERS) as pool:
+            futures = {pool.submit(_submit, item): item for item in file_items}
+            done = 0
+            for fut in as_completed(futures):
+                item = futures[fut]
+                try:
+                    ok = fut.result()
+                    if ok:
+                        stats["processed"] += 1
+                    else:
+                        stats["skipped"] += 1
+                except Exception as exc:
+                    logger.error("SP item error for %s: %s", item.get("name", "?"), exc)
+                    stats["errors"] += 1
+                    stats["failed_files"].append(item.get("name", "unknown"))
+                done += 1
+                if done % 500 == 0:
+                    logger.info(
+                        "SP progress: %d/%d files — %d indexed, %d skipped, %d errors",
+                        done, len(file_items),
+                        stats["processed"], stats["skipped"], stats["errors"],
+                    )
+
+        _clear_listing_cache(drive_id)
 
     sp_conn.close()
     return stats
@@ -376,7 +513,7 @@ def delta_sync(site_cfg: dict, cfg: dict, token: str) -> dict:
     client = QdrantClient(url=QDRANT_URL)
     sp_conn = _get_sp_manifest_conn()
     temp_dir = Path(cfg.get("temp_dir", "/tmp/qnoe-sharepoint/"))
-    stats = {"processed": 0, "skipped": 0, "deleted": 0, "errors": 0}
+    stats: dict = {"processed": 0, "skipped": 0, "deleted": 0, "errors": 0, "failed_files": []}
 
     token_ts = time.monotonic()
     drive_map = _resolve_drive_ids(site_cfg, token)
@@ -423,6 +560,7 @@ def delta_sync(site_cfg: dict, cfg: dict, token: str) -> dict:
             except Exception as exc:
                 logger.error("SP delta item error: %s", exc)
                 stats["errors"] += 1
+                stats["failed_files"].append(item.get("name", "unknown"))
 
         _save_delta_link(drive_id, new_delta_link)
 
@@ -451,6 +589,10 @@ def main() -> None:
         "--validate", action="store_true",
         help="Auth check + list drives only; no indexing",
     )
+    parser.add_argument(
+        "--skip-files", type=int, default=0, metavar="N",
+        help="Skip the first N files in the listing (resume from a known position)",
+    )
     args = parser.parse_args()
 
     cfg = load_sharepoint_config(args.config)
@@ -475,7 +617,7 @@ def main() -> None:
 
     for site in sites:
         if args.full:
-            stats = full_sync(site, cfg, token)
+            stats = full_sync(site, cfg, token, skip_files=args.skip_files)
         else:
             stats = delta_sync(site, cfg, token)
         logger.info("SP sync done for '%s': %s", site["name"], stats)

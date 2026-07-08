@@ -1,5 +1,5 @@
 # Decisions Log
-*Last updated: 2026-07-03*
+*Last updated: 2026-07-06*
 
 > Architectural and design decisions with reasoning. Append new entries at the bottom.
 > Related: [[memory/mistakes]] · [[HANDOFF#All design decisions — summary]]
@@ -73,6 +73,20 @@
 **Context:** Need each Teams user routed to their sub-team's profile (SOUL.md, RAG, memory) via a single Teams bot.
 **Decision:** `multiplex_profiles: true` (top-level config) + adapter stamps `source.profile` from `user_profiles.yaml` mapping. Sub-profile configs have `gateway.platforms.teams_polling.enabled: false`. Two patches to gateway internals prevent duplicate adapter creation.
 **Reasoning:** Single bot credential, no per-profile tokens. Profile routing happens at adapter level, gateway's `_profile_runtime_scope` handles the rest. Required patching `config.py` and `run.py` — patches will need re-applying after hermes-agent upgrades.
+
+## D12 — BM25 hybrid search via fastembed sparse vectors
+
+**Date:** 2026-07-06
+**Context:** 3 of 20 test queries fail because dense-only search can't match exact tokens — device IDs like `SLG07-C2`, function names, paper titles. Semantic similarity is weak for rare, specific terms.
+**Decision:** Add BM25 sparse vectors (fastembed `Qdrant/bm25` model) alongside existing nomic-embed dense vectors. Qdrant's native sparse vector support + RRF fusion handles hybrid retrieval. No separate BM25 index.
+**Architecture:**
+- Each Qdrant point stores two vectors: unnamed dense (`""`) + named sparse (`"text-sparse"`)
+- Query time: two `Prefetch` queries (dense + sparse) fused with `FusionQuery(fusion=Fusion.RRF)` in one Qdrant call per collection
+- Reranking layer unchanged — cross-encoder still reranks the RRF-fused results
+**Library:** `fastembed` 0.8.0 — CPU-only, ~1MB model, no GPU required
+**Files changed:** `agent/ingest/embed.py`, `agent/ingest/run_ingest.py`, `agent/ingest/sharepoint_sync.py`, `agent/ingest/qcodes_scanner.py`, `hermes/plugins/qnoe_rag/__init__.py`
+**New file:** `agent/indexing/backfill_sparse.py` — one-time resumable backfill for existing points
+**Reasoning:** Native Qdrant hybrid avoids maintaining separate index. fastembed BM25 is trivial to deploy. Fixes exact-match failures without touching the reranking layer.
 
 ## D11 — tool_use_enforcement: true for Hermes 3
 

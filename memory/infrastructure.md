@@ -1,8 +1,25 @@
 # Infrastructure
-*Last updated: 2026-07-03 (SharePoint integration added)*
+*Last updated: 2026-07-06 (GitHub repo added)*
 
 > DGX hardware, services, networking, and system-level config.
 > Full setup guide: [[DGX_SETUP]] · Current state: [[SETUP_LOG]] · Deploy procedures: [[memory/deploy-patterns]]
+
+## GitHub Repository
+
+**URL:** https://github.com/yuvalzamir/QNOE_Agent.git
+**Branch:** `master`
+**Setup:** 2026-07-06 — initial commit of 106 files.
+
+**Excluded from repo:** `secrets/` (Teams credentials), `SSHKey.txt` (DGX private key), `tmp/`, `.claude/settings.local.json`.
+**Included:** all docs, memory vault, agent code, Hermes profiles + plugins, configs, scripts, runbooks.
+
+```bash
+# Clone
+git clone https://github.com/yuvalzamir/QNOE_Agent.git
+
+# Push changes
+cd Z:/code/AI_Student && git add -A && git commit -m "..." && git push
+```
 
 ## SSH Access
 

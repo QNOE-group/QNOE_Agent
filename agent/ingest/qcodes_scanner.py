@@ -28,10 +28,13 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     Distance,
     PointStruct,
+    SparseIndexParams,
+    SparseVector,
+    SparseVectorParams,
     VectorParams,
 )
 
-from .embed import embed_documents, VECTOR_DIM
+from .embed import embed_documents, embed_sparse, VECTOR_DIM
 from .excluded import find_prune_args
 
 logger = logging.getLogger(__name__)
@@ -249,6 +252,9 @@ async def _ensure_collection(client: AsyncQdrantClient, collection: str) -> None
         await client.create_collection(
             collection_name=collection,
             vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
+            sparse_vectors_config={"text-sparse": SparseVectorParams(
+                index=SparseIndexParams(on_disk=False)
+            )},
         )
         logger.info("Created collection: %s", collection)
 
@@ -366,19 +372,28 @@ async def scan_roots(roots: list[Path], dry_run: bool = False) -> dict:
             cards = _make_summary_cards(db_path, new_runs)
             texts = [c["text"] for c in cards]
             vectors = embed_documents(texts)
+            sparse_vecs = embed_sparse(texts)
 
             for i in range(0, len(cards), UPSERT_BATCH):
-                batch_cards = cards[i : i + UPSERT_BATCH]
-                batch_vecs = vectors[i : i + UPSERT_BATCH]
+                batch_slice = slice(i, i + UPSERT_BATCH)
                 await client.upsert(
                     collection_name=COLLECTION,
                     points=[
                         PointStruct(
                             id=str(uuid4()),
-                            vector=vec,
+                            vector={
+                                "": vec,
+                                "text-sparse": SparseVector(
+                                    indices=sv.indices.tolist(),
+                                    values=sv.values.tolist(),
+                                ),
+                            },
                             payload=card,
                         )
-                        for vec, card in zip(batch_vecs, batch_cards)
+                        for vec, sv, card in zip(
+                            vectors[batch_slice], sparse_vecs[batch_slice],
+                            cards[batch_slice],
+                        )
                     ],
                 )
             stats["cards_upserted"] += len(cards)
@@ -478,14 +493,27 @@ async def scan_specific_dbs(db_paths: list[Path], dry_run: bool = False) -> dict
             cards = _make_summary_cards(db_path, new_runs)
             texts = [c["text"] for c in cards]
             vectors = embed_documents(texts)
+            sparse_vecs = embed_sparse(texts)
             for i in range(0, len(cards), UPSERT_BATCH):
-                batch_cards = cards[i : i + UPSERT_BATCH]
-                batch_vecs = vectors[i : i + UPSERT_BATCH]
+                batch_slice = slice(i, i + UPSERT_BATCH)
                 await client.upsert(
                     collection_name=COLLECTION,
                     points=[
-                        PointStruct(id=str(uuid4()), vector=vec, payload=card)
-                        for vec, card in zip(batch_vecs, batch_cards)
+                        PointStruct(
+                            id=str(uuid4()),
+                            vector={
+                                "": vec,
+                                "text-sparse": SparseVector(
+                                    indices=sv.indices.tolist(),
+                                    values=sv.values.tolist(),
+                                ),
+                            },
+                            payload=card,
+                        )
+                        for vec, sv, card in zip(
+                            vectors[batch_slice], sparse_vecs[batch_slice],
+                            cards[batch_slice],
+                        )
                     ],
                 )
             stats["cards_upserted"] += len(cards)

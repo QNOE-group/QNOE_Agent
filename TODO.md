@@ -1,5 +1,5 @@
 # QNOE Lab Agent — Master TODO
-*Last updated: 2026-07-03 — Hermes Agent M1–M7.5 done, M8 cleanup in progress*
+*Last updated: 2026-07-06 — BM25 hybrid search deployed, backfill pending*
 
 > Claude Code memory: [[HOME]] · Migration tracker: [[memory/hermes-migration]] · Decisions: [[memory/decisions]]
 
@@ -107,8 +107,17 @@
 - [x] RAG evaluation (20 test queries) ✅ *(2026-06-22 — 17/20 queries returned relevant results (85%). 3 failures are too-generic queries below reranker threshold; BM25 hybrid search will improve. Top scores 4.0–8.3.)*
 
 ### L2 — BM25 hybrid search
-- [ ] Sparse vectors enabled in Qdrant
-- [ ] Ingestion + retrieval updated for hybrid search
+- [x] fastembed installed in both venvs (`venv/bin/pip3`, `hermes-venv/bin/pip3`) ✅ *(2026-07-06)*
+- [x] BM25 model pre-cached on DGX (`~/.cache/fastembed/`, both venvs) ✅ *(2026-07-06)*
+- [x] `embed_sparse()` added to `agent/ingest/embed.py` ✅ *(2026-07-06)*
+- [x] `_upsert_chunks` updated to store sparse + dense vectors in all ingestion paths ✅ *(2026-07-06 — run_ingest.py, sharepoint_sync.py, qcodes_scanner.py)*
+- [x] `_ensure_collection` updated to create new collections with `text-sparse` sparse field ✅ *(2026-07-06)*
+- [x] Schema migrated: `text-sparse` field added to all 8 existing collections via `create_vector_name` ✅ *(2026-07-06)*
+- [x] Hybrid query (dense + BM25 prefetch → RRF fusion) implemented in `hermes/plugins/qnoe_rag/__init__.py` ✅ *(2026-07-06)*
+- [x] `agent/indexing/backfill_sparse.py` written (resumable, SQLite progress tracking) ✅ *(2026-07-06)*
+- [ ] **Run backfill** — 638K+ existing points have no sparse vectors yet. Command: `cd /opt/qnoe-agent && AGENT_DATA_DIR=/opt/qnoe-agent/memory QDRANT_URL=http://localhost:6333 nohup venv/bin/python3 -m agent.indexing.backfill_sparse > logs/backfill_sparse.log 2>&1 &`
+- [ ] **Verify backfill complete** — query `SELECT collection, completed_at FROM sparse_backfill` in `memory/episodic.db`; all rows should have `completed_at` not null
+- [ ] **Run the 3 previously failing exact-term queries** to confirm hybrid search fixes them (device IDs, function names, paper titles)
 
 ### L3 — SQLite episodic
 - [x] `events` table ✅
@@ -248,7 +257,10 @@
 - [x] **Tool calling as text** ✅ *(2026-07-03 — Root cause: `TOOL_USE_ENFORCEMENT_MODELS` in `prompt_builder.py:275` only includes GPT/Codex/Gemini/Qwen/etc — not Hermes 3. With `tool_use_enforcement: auto`, the enforcement guidance was never injected. Fixed: set `tool_use_enforcement: true` in config.yaml. Also compounds with I1 context bloat — at 19.5K tokens the model degrades further. Needs service restart to take effect.)*
 
 #### Priority: NEW FEATURES
+- [ ] **I8 — Channel @mention support** — Ask IT to add `ChannelMessage.Read.All` to app `108a03c5` (in addition to `ChannelMessage.Send` already requested). Enables bot to respond to @mentions in Teams channels. Requires polling channel messages in `teams_polling` plugin. Defer until after `ChannelMessage.Send` is granted and channel reporting is live.
 - [~] **I4 — SharePoint access + embedding** — LIVE (2026-07-03). Two sites indexed: `twisted-materials` (QTOM, SpectroMag, THz gas laser) + `noe-group` (all). Delta sync every 30 min via `SharePointPoller`. Nightly full sync as safety net. ONGOING: monitor delta sync health, verify nightly runs, expand site/folder coverage as needed.
+  - [ ] **Verify current full sync run completed** (started 2026-07-08) — check log, confirm `processed` count, no auth errors, points land in `group-wide` collection with `text-sparse` vectors (new points should have sparse since ingestion code was updated)
+  - [ ] **After sync + backfill both done:** spot-check a SharePoint-sourced point in Qdrant to confirm it has both dense and `text-sparse` vectors: `GET /collections/group-wide/points/{id}`
 - [x] **I6 — QCoDeS run details & diff tools** ✅ *(2026-07-06)* — Added `qcodes_run_details` and `qcodes_run_diff` to `qnoe_qcodes` plugin. Both parse `description_json` in Python (not LLM) to extract swept/measured params with labels+units. Diff shows only_in_a / only_in_b / in_both for swept and measured separately. No CIFS access needed — queries `qcodes_registry` only. Deployed to `/opt/qnoe-agent/hermes/plugins/qnoe_qcodes/__init__.py`. Smoke tested against real registry (75,994 runs). **Needs service restart to activate.**
 
 ---

@@ -95,6 +95,17 @@ def _get_qdrant():
     return AsyncQdrantClient(url=QDRANT_URL)
 
 
+@lru_cache(maxsize=1)
+def _load_sparse_model():
+    from fastembed import SparseTextEmbedding
+
+    return SparseTextEmbedding(model_name="Qdrant/bm25")
+
+
+def _embed_sparse_query(text: str):
+    return next(iter(_load_sparse_model().embed([text])))
+
+
 # ---------------------------------------------------------------------------
 # Retrieval helpers
 # ---------------------------------------------------------------------------
@@ -132,25 +143,41 @@ def _score_to_chunk(point, collection: str) -> dict:
 
 
 async def _retrieve(query: str, collections: list[str]) -> list[dict]:
-    """Top-K retrieval across collections with reranking."""
+    """Hybrid (dense + BM25 sparse) retrieval across collections with RRF and reranking."""
     if not collections:
         return []
 
+    from qdrant_client.models import Prefetch, FusionQuery, Fusion, SparseVector
+
     loop = asyncio.get_running_loop()
-    vector = await loop.run_in_executor(None, _embed_query, query)
+    dense_vec, sparse_emb = await asyncio.gather(
+        loop.run_in_executor(None, _embed_query, query),
+        loop.run_in_executor(None, _embed_sparse_query, query),
+    )
     qdrant = _get_qdrant()
 
     async def _query_one(coll: str) -> list[dict]:
         try:
             result = await qdrant.query_points(
                 collection_name=coll,
-                query=vector,
+                prefetch=[
+                    Prefetch(query=dense_vec, limit=TOP_K_PER_COLLECTION),
+                    Prefetch(
+                        query=SparseVector(
+                            indices=sparse_emb.indices.tolist(),
+                            values=sparse_emb.values.tolist(),
+                        ),
+                        using="text-sparse",
+                        limit=TOP_K_PER_COLLECTION,
+                    ),
+                ],
+                query=FusionQuery(fusion=Fusion.RRF),
                 limit=TOP_K_PER_COLLECTION,
                 with_payload=True,
             )
             return [_score_to_chunk(h, coll) for h in result.points]
         except Exception as exc:
-            logger.warning("Qdrant search failed for %s: %s", coll, exc)
+            logger.warning("Qdrant hybrid search failed for %s: %s", coll, exc)
             return []
 
     per_collection = await asyncio.gather(

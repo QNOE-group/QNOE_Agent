@@ -20,7 +20,7 @@ sites:
       - "Optical elements"
       - "Proteox"
       - "Quotes"
-    max_file_mb: 50
+    max_file_mb: 300
 
   # "NOE-Group" Teams group — index everything
   - name: "noe-group"
@@ -28,7 +28,7 @@ sites:
     drives: ["Documents"]
     collection: "group-wide"
     exclude_folders: []
-    max_file_mb: 50
+    max_file_mb: 300
 
 temp_dir: "/tmp/qnoe-sharepoint/"   # files deleted immediately after chunking
 poll_interval_minutes: 30

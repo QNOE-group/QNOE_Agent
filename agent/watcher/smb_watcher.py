@@ -425,7 +425,7 @@ class SharePointPoller(threading.Thread):
                     break
                 try:
                     stats = _sp_delta_sync(site, cfg, token)
-                    if any(v > 0 for v in stats.values()):
+                    if any(v > 0 for v in stats.values() if isinstance(v, int)):
                         logger.info(
                             "SharePointPoller: %s — %s", site["name"], stats
                         )

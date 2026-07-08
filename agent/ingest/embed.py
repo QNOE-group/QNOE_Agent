@@ -41,3 +41,17 @@ def embed_documents(texts: list[str]) -> list[list[float]]:
         show_progress_bar=len(texts) > 100,
     )
     return [v.tolist() for v in vectors]
+
+
+SPARSE_MODEL_NAME = "Qdrant/bm25"
+
+
+@lru_cache(maxsize=1)
+def _load_sparse_model():
+    from fastembed import SparseTextEmbedding
+    return SparseTextEmbedding(model_name=SPARSE_MODEL_NAME)
+
+
+def embed_sparse(texts: list[str]) -> list:
+    """Return list of SparseEmbedding objects (each has .indices, .values) for BM25."""
+    return list(_load_sparse_model().embed(texts))

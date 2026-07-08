@@ -1,5 +1,5 @@
 # Agent Code
-*Last updated: 2026-07-03*
+*Last updated: 2026-07-06*
 
 > Agent source files, message flow, tools, and how the pieces connect.
 > Full guide: [[AGENT_CODE_GUIDE]] · Framework design: [[AGENT_FRAMEWORK]] · Being replaced by: [[memory/hermes-migration]]
@@ -39,10 +39,10 @@ Must use full path: `/opt/qnoe-agent/models/hermes-3-70b-awq`
 
 ## Embedding
 
-- Model: nomic-embed-text-v1.5 (768 dim)
-- Device: CPU (GPU occupied by vLLM)
+- **Dense:** nomic-embed-text-v1.5 (768 dim), CPU, `@lru_cache(maxsize=1)` singleton
+- **Sparse (BM25):** fastembed `Qdrant/bm25`, CPU-only, `@lru_cache(maxsize=1)` singleton. Cached in `~/.cache/fastembed/` (must be pre-downloaded — see [[memory/mistakes#M31]])
 - Custom code: `.py` files must exist in model dir, `auto_map` in config.json uses local paths — see [[memory/mistakes#M3 — nomic-embed custom code in Docker]]
-- **Caching:** `_load_embed_model()` and `_load_reranker()` use `@lru_cache(maxsize=1)` — singleton per process. Models reload only after service restart. Memory pressure from concurrent processes (e.g. SharePoint digest) can evict tensors to swap, making it appear to reload.
+- **Caching:** All models use `@lru_cache(maxsize=1)` — singleton per process. Memory pressure from concurrent processes can evict tensors to swap.
 
 ## RAG Plugin (qnoe_rag)
 
@@ -51,8 +51,18 @@ Must use full path: `/opt/qnoe-agent/models/hermes-3-70b-awq`
 - **TOP_K_PER_COLLECTION = 20** — candidates fetched per collection before reranking
 - **RERANK_POOL = 20** — pool size passed to cross-encoder
 - **RERANK_THRESHOLD = 0.5** — minimum score; chunks below this are dropped
-- **Flow:** embed query → search each collection (up to 20 candidates each) → deduplicate → cross-encoder reranks top 20 → return top 3 across ALL collections combined
+- **Flow (hybrid, 2026-07-06):** embed query (dense + BM25 sparse) → hybrid Qdrant search per collection (RRF fusion of dense + sparse prefetch) → deduplicate → cross-encoder reranks top 20 → return top 3 across ALL collections combined
 - **Savings from TOP_K 5→3:** ~1,200 tokens per turn
+
+### BM25 Sparse Vectors (added 2026-07-06)
+
+- **Why:** Dense-only retrieval fails on exact-term queries (device IDs like `SLG07-C2`, function names, paper titles). BM25 gives high weight to rare, specific tokens.
+- **Library:** `fastembed` 0.8.0, model `Qdrant/bm25` (CPU-only, ~1MB, cached in `~/.cache/fastembed/`)
+- **Storage:** Each Qdrant point has two vectors: unnamed dense (`""`) + named sparse (`"text-sparse"`)
+- **Query:** `Prefetch(dense) + Prefetch(sparse, using="text-sparse")` → `FusionQuery(fusion=Fusion.RRF)` — all in one Qdrant call per collection
+- **Schema:** All 8 collections have `text-sparse` field (added 2026-07-06 via `create_vector_name`)
+- **Backfill:** `agent/indexing/backfill_sparse.py` — resumable, tracks progress in `sparse_backfill` SQLite table. Run once to populate sparse vectors for existing 638K+ points. **NOT YET RUN** as of 2026-07-06.
+- **pip path:** use `pip3` not `pip` in agent venv (`/opt/qnoe-agent/venv/bin/pip3`)
 
 ## Active Toolsets & Context Budget (QTM profile, fresh session)
 
