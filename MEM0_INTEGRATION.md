@@ -8,6 +8,25 @@
 
 ---
 
+## Verification status (2026-07-08) — branch `feature/mem0-per-user`
+
+Code committed (not deployed). Validated on the DGX **without vLLM** (down for the SharePoint full sync):
+
+| Check | Result |
+|---|---|
+| `mem0ai` install into `hermes-venv` | ✅ **2.0.11**, purely additive per `pip check`. **BUT** downgraded `protobuf` 7.35.1→6.33.6 (mem0 chain needs protobuf<7). No declared conflicts; `qnoe_rag` uses Qdrant over HTTP not gRPC. **Watch-item on agent restart.** |
+| `episodic_memory` Qdrant collection (768-dim) + `user_id` keyword index | ✅ created, status green |
+| `Memory.from_config(MEM0_CONFIG)` schema | ✅ accepted by 2.0.11 |
+| Offline embedder (local nomic, `HF_HUB_OFFLINE=1`) | ✅ loads — *the scariest unknown, now cleared* |
+| Write→read round-trip (`add(infer=False)` → `search`) | ✅ fact stored + retrieved (score 0.484) |
+| **Per-user isolation** | ✅ other user gets 0 results — the test `USER.md` fails |
+
+**Deferred (needs vLLM):** `add(infer=True)` LLM distillation; in-agent deploy + `USER.md` disable + restart + tool-calling-under-context check.
+
+> ⚠️ **mem0 2.x API change (breaking vs the original design):** `search()` no longer takes `user_id=`/`limit=` — use `search(query, filters={"user_id": uid}, top_k=N)`. `add()` **does** still take `user_id=` (keyword-only). Plugin code updated accordingly.
+
+---
+
 ## 1. Goal & final architecture
 
 We want **two** persistent memory scopes, not three:
@@ -200,7 +219,8 @@ def prefetch(self, query: str, *, session_id: str = "") -> str:
     if MEM0_ENABLED:
         try:
             uid = self._uid_for(session_id)
-            facts = _get_mem0().search(query, user_id=uid, limit=MEM0_TOP_K)
+            # mem0 2.x: user_id in filters, count is top_k (NOT user_id=/limit=)
+            facts = _get_mem0().search(query, filters={"user_id": uid}, top_k=MEM0_TOP_K)
             mem_block = _format_facts(facts)
         except Exception as e:                     # Mem0 must never break a turn
             logger.warning("Mem0 search failed: %s", e)

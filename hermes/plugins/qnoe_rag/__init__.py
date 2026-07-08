@@ -432,7 +432,10 @@ class QnoeRagProvider(MemoryProvider):
         if MEM0_ENABLED:
             try:
                 uid = self._uid_for(session_id)
-                facts = _get_mem0().search(query, user_id=uid, limit=MEM0_TOP_K)
+                # mem0 2.x: user_id goes in filters, count is top_k.
+                facts = _get_mem0().search(
+                    query, filters={"user_id": uid}, top_k=MEM0_TOP_K
+                )
                 mem_block = _format_facts(facts)
             except Exception as e:
                 logger.warning("Mem0 search failed: %s", e)
