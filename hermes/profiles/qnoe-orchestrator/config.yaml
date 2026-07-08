@@ -1,0 +1,83 @@
+# Orchestrator profile config — overrides shared config.yaml
+# This is the primary profile; gateway and Teams polling are enabled here.
+
+model:
+  default: /opt/qnoe-agent/models/hermes-3-70b-awq
+  provider: custom
+  base_url: http://localhost:8000/v1
+  api_key: no-key-required
+  context_length: 32768
+  max_tokens: 4096
+custom_providers:
+- name: vLLM-local
+  base_url: http://localhost:8000/v1
+toolsets:
+- hermes-cli
+- qnoe-lab
+plugins:
+  enabled:
+  - qnoe_qcodes
+  - teams_polling
+agent:
+  max_turns: 90
+  gateway_timeout: 1800
+  tool_use_enforcement: true
+  task_completion_guidance: true
+  parallel_tool_call_guidance: true
+  environment_probe: false
+  coding_context: auto
+  disabled_toolsets:
+  - tts
+  - session_search
+  - todo
+  - cronjob
+  - delegation
+  - image_gen
+delegation:
+  model: ''
+  max_iterations: 25
+  max_concurrent_children: 2
+  max_async_children: 1
+  max_spawn_depth: 1
+  orchestrator_enabled: true
+  subagent_auto_approve: false
+  inherit_mcp_toolsets: true
+terminal:
+  backend: local
+  timeout: 180
+file_read_max_chars: 100000
+tool_output:
+  max_bytes: 50000
+  max_lines: 2000
+  max_line_length: 2000
+logging:
+  level: INFO
+  max_size_mb: 5
+  backup_count: 3
+sessions:
+  auto_prune: false
+  retention_days: 90
+security:
+  allow_private_urls: true
+  redact_secrets: true
+multiplex_profiles: true
+gateway:
+  strict: false
+  platforms:
+    teams_polling:
+      enabled: true
+      extra:
+        poll_interval_active: 3
+        poll_interval_idle: 10
+        active_window: 300
+        chat_refresh_interval: 300
+memory:
+  provider: qnoe_rag
+streaming:
+  enabled: false
+compression:
+  threshold: 0.75
+tools:
+  tool_search:
+    enabled: 'on'
+_config_version: 34

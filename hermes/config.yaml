@@ -1,5 +1,6 @@
 # Hermes Agent config for QNOE Lab Agent
 # vLLM local endpoint (Hermes 3 70B AWQ)
+# This is the SHARED config. Per-profile overrides in profiles/*/config.yaml.
 
 model:
   default: /opt/qnoe-agent/models/hermes-3-70b-awq
@@ -25,11 +26,18 @@ plugins:
 agent:
   max_turns: 90
   gateway_timeout: 1800
-  tool_use_enforcement: auto
+  tool_use_enforcement: true
   task_completion_guidance: true
   parallel_tool_call_guidance: true
   environment_probe: false
   coding_context: auto
+  disabled_toolsets:
+    - tts
+    - session_search
+    - todo
+    - cronjob
+    - delegation
+    - image_gen
 
 # Delegation (subagent routing)
 delegation:
@@ -72,6 +80,9 @@ security:
   allow_private_urls: true
   redact_secrets: true
 
+# Multi-profile routing (per-user profile assignment via user_profiles.yaml)
+multiplex_profiles: true
+
 # Gateway — Teams polling adapter
 gateway:
   strict: false
@@ -92,4 +103,13 @@ memory:
 streaming:
   enabled: false
 
-_config_version: 30
+# Context compression (reduces context bloat — I1)
+compression:
+  threshold: 0.75
+
+# Tool Search (dynamic tool schema loading)
+tools:
+  tool_search:
+    enabled: 'on'
+
+_config_version: 34

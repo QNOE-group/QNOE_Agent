@@ -1,0 +1,11 @@
+# User -> Hermes profile routing
+# Unmapped users get the default profile
+default: qnoe-orchestrator
+
+# Map by Azure AD user ID (stable, from Graph API)
+users:
+  "ef6f38c9-f873-4cc8-bbf3-e43cb69d8a16": qnoe-qtm  # Alexander Rothstein
+  "862ec907-3e65-4c00-aa0c-02948656ae7f": qnoe-qtm  # Yuval Zamir
+
+# Fallback: map by Teams display name
+users_by_name: {}

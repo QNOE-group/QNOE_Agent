@@ -1,12 +1,23 @@
 """QNOE QCoDeS measurement registry plugin for Hermes Agent.
 
-Exposes a ``qcodes_search`` tool that queries the ``qcodes_registry``
-SQLite table (populated by the QCoDeS scanner during ingestion/nightly
-indexing). Returns structured run cards with experiment name, sample,
-parameters, timestamps, and source DB path.
+Exposes three tools that query the ``qcodes_registry`` SQLite table
+(populated by the QCoDeS scanner during ingestion/nightly indexing).
+The registry DB lives at ``$AGENT_DATA_DIR/episodic.db``.
 
-The registry DB lives at ``$AGENT_DATA_DIR/episodic.db`` (same DB used
-by the ingestion pipeline and QCoDeS scanner).
+Tools
+-----
+qcodes_search
+    Find runs by sample name, experiment type, date range, or free text.
+    Returns run cards with db_path + run_id identifiers for the other tools.
+
+qcodes_run_details
+    Fetch full parameter details for one run: swept axes and measured
+    parameters, each with label and unit, parsed from the stored
+    run_description JSON.
+
+qcodes_run_diff
+    Compare two runs side-by-side. Returns which swept axes and measured
+    parameters differ between them.
 """
 
 from __future__ import annotations
@@ -15,9 +26,8 @@ import json
 import logging
 import os
 import sqlite3
-from typing import Any, Callable, Dict, List
-
 from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +37,7 @@ REGISTRY_DB = os.path.join(AGENT_DATA_DIR, "episodic.db")
 MAX_RESULTS = 50
 
 # ---------------------------------------------------------------------------
-# Tool schema
+# Schemas  (kept thin — descriptions drive LLM behaviour, not token count)
 # ---------------------------------------------------------------------------
 
 QCODES_SEARCH_SCHEMA = {
@@ -50,7 +60,7 @@ QCODES_SEARCH_SCHEMA = {
             },
             "sample": {
                 "type": "string",
-                "description": "Filter by sample name (exact or partial match).",
+                "description": "Filter by sample name (partial match).",
             },
             "experiment": {
                 "type": "string",
@@ -66,16 +76,58 @@ QCODES_SEARCH_SCHEMA = {
             },
             "limit": {
                 "type": "integer",
-                "description": f"Max results to return (default 20, max {MAX_RESULTS}).",
+                "description": f"Max results (default 20, max {MAX_RESULTS}).",
             },
         },
         "required": [],
     },
 }
 
+QCODES_RUN_DETAILS_SCHEMA = {
+    "name": "qcodes_run_details",
+    "description": (
+        "Get full parameter details for a QCoDeS run: swept axes and "
+        "measured parameters with labels and units. "
+        "Supply db_path and run_id from qcodes_search results."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "db_path": {"type": "string", "description": "DB file path from qcodes_search."},
+            "run_id": {"type": "integer", "description": "Run ID from qcodes_search."},
+        },
+        "required": ["db_path", "run_id"],
+    },
+}
+
+QCODES_RUN_DIFF_SCHEMA = {
+    "name": "qcodes_run_diff",
+    "description": (
+        "Compare two QCoDeS runs: shows which swept axes and measured "
+        "parameters differ between them. "
+        "Supply db_path and run_id for each run from qcodes_search results."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "db_path_a": {"type": "string", "description": "DB path for run A."},
+            "run_id_a": {"type": "integer", "description": "Run ID for run A."},
+            "db_path_b": {"type": "string", "description": "DB path for run B."},
+            "run_id_b": {"type": "integer", "description": "Run ID for run B."},
+        },
+        "required": ["db_path_a", "run_id_a", "db_path_b", "run_id_b"],
+    },
+}
+
 # ---------------------------------------------------------------------------
-# Query logic
+# DB helpers
 # ---------------------------------------------------------------------------
+
+
+def _get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(REGISTRY_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def _iso_to_epoch(iso_str: str) -> float:
@@ -91,7 +143,7 @@ def _iso_to_epoch(iso_str: str) -> float:
 
 
 def _epoch_to_iso(epoch) -> str:
-    """Convert Unix epoch (float or string) to ISO date string for display."""
+    """Convert Unix epoch (float or string) to human-readable ISO datetime."""
     try:
         val = float(epoch) if epoch else 0.0
         if val > 0:
@@ -101,10 +153,66 @@ def _epoch_to_iso(epoch) -> str:
         return str(epoch)
 
 
-def _get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(REGISTRY_DB)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _fetch_run(db_path: str, run_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch a single run record from qcodes_registry by (db_path, run_id)."""
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM qcodes_registry WHERE db_path=? AND run_id=?",
+            (db_path, run_id),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Parameter parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_params(description_json: Optional[str]) -> Dict[str, Any]:
+    """Parse a QCoDeS run_description JSON blob into swept/measured lists."""
+    if not description_json:
+        return {"swept": [], "measured": []}
+    try:
+        desc = json.loads(description_json)
+        inter = desc.get("interdependencies_", {})
+        all_params = inter.get("parameters", {})
+        dependencies = inter.get("dependencies", {})
+
+        measured_names = set(dependencies.keys())
+        swept_names = {p for deps in dependencies.values() for p in deps}
+
+        def _info(name: str) -> Dict[str, str]:
+            p = all_params.get(name, {})
+            return {"name": name, "label": p.get("label", name), "unit": p.get("unit", "")}
+
+        return {
+            "swept": [_info(n) for n in sorted(swept_names)],
+            "measured": [_info(n) for n in sorted(measured_names)],
+        }
+    except Exception:
+        logger.debug("Failed to parse description_json", exc_info=True)
+        return {"swept": [], "measured": [], "parse_error": True}
+
+
+def _diff_param_lists(
+    list_a: List[Dict], list_b: List[Dict]
+) -> Dict[str, Any]:
+    """Diff two parameter lists by name."""
+    map_a = {p["name"]: p for p in list_a}
+    map_b = {p["name"]: p for p in list_b}
+    return {
+        "only_in_a": [p for n, p in map_a.items() if n not in map_b],
+        "only_in_b": [p for n, p in map_b.items() if n not in map_a],
+        "in_both": sorted(n for n in map_a if n in map_b),
+    }
+
+
+# ---------------------------------------------------------------------------
+# qcodes_search
+# ---------------------------------------------------------------------------
 
 
 def _search(
@@ -119,7 +227,7 @@ def _search(
     if not os.path.exists(REGISTRY_DB):
         return []
 
-    conditions = []
+    conditions: List[str] = []
     params: list = []
 
     if query:
@@ -128,25 +236,22 @@ def _search(
         )
         q = f"%{query}%"
         params.extend([q, q, q, q])
-
     if sample:
         conditions.append("sample_name LIKE ?")
         params.append(f"%{sample}%")
-
     if experiment:
         conditions.append("exp_name LIKE ?")
         params.append(f"%{experiment}%")
-
     if date_from:
         conditions.append("completed_timestamp >= ?")
         params.append(_iso_to_epoch(date_from))
-
     if date_to:
         conditions.append("completed_timestamp <= ?")
         params.append(_iso_to_epoch(date_to + "T23:59:59"))
 
     where = " AND ".join(conditions) if conditions else "1=1"
     limit = min(max(1, limit), MAX_RESULTS)
+    params.append(limit)
 
     sql = f"""
         SELECT db_path, run_id, exp_name, sample_name, run_name,
@@ -156,8 +261,6 @@ def _search(
         ORDER BY completed_timestamp DESC
         LIMIT ?
     """
-    params.append(limit)
-
     conn = _get_db()
     try:
         rows = conn.execute(sql, params).fetchall()
@@ -166,33 +269,7 @@ def _search(
         conn.close()
 
 
-def _format_results(rows: List[Dict[str, Any]]) -> str:
-    """Format query results as JSON string for tool output."""
-    if not rows:
-        return json.dumps({"result": "No matching measurements found.", "count": 0})
-
-    results = []
-    for r in rows:
-        results.append({
-            "db_path": r["db_path"],
-            "run_id": r["run_id"],
-            "experiment": r["exp_name"],
-            "sample": r["sample_name"],
-            "run_name": r["run_name"],
-            "parameters": r["parameters"],
-            "timestamp": _epoch_to_iso(r["completed_timestamp"]),
-        })
-
-    return json.dumps({"results": results, "count": len(results)})
-
-
-# ---------------------------------------------------------------------------
-# Tool handler
-# ---------------------------------------------------------------------------
-
-
 def _handle_qcodes_search(args: Dict[str, Any]) -> str:
-    """Handle qcodes_search tool call."""
     try:
         rows = _search(
             query=args.get("query", ""),
@@ -202,9 +279,94 @@ def _handle_qcodes_search(args: Dict[str, Any]) -> str:
             date_to=args.get("date_to", ""),
             limit=args.get("limit", 20),
         )
-        return _format_results(rows)
+        if not rows:
+            return json.dumps({"result": "No matching measurements found.", "count": 0})
+        results = [
+            {
+                "db_path": r["db_path"],
+                "run_id": r["run_id"],
+                "experiment": r["exp_name"],
+                "sample": r["sample_name"],
+                "run_name": r["run_name"],
+                "parameters": r["parameters"],
+                "timestamp": _epoch_to_iso(r["completed_timestamp"]),
+            }
+            for r in rows
+        ]
+        return json.dumps({"results": results, "count": len(results)})
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# qcodes_run_details
+# ---------------------------------------------------------------------------
+
+
+def _handle_qcodes_run_details(args: Dict[str, Any]) -> str:
+    db_path = args.get("db_path", "")
+    run_id = args.get("run_id")
+    if not db_path or run_id is None:
+        return json.dumps({"error": "db_path and run_id are required."})
+
+    row = _fetch_run(db_path, int(run_id))
+    if not row:
+        return json.dumps({"error": f"Run {run_id} not found in registry for {db_path}."})
+
+    params = _parse_params(row.get("description_json"))
+    return json.dumps({
+        "db_path": row["db_path"],
+        "run_id": row["run_id"],
+        "experiment": row["exp_name"],
+        "sample": row["sample_name"],
+        "run_name": row["run_name"],
+        "timestamp": _epoch_to_iso(row["completed_timestamp"]),
+        "swept": params["swept"],
+        "measured": params["measured"],
+    })
+
+
+# ---------------------------------------------------------------------------
+# qcodes_run_diff
+# ---------------------------------------------------------------------------
+
+
+def _handle_qcodes_run_diff(args: Dict[str, Any]) -> str:
+    db_path_a = args.get("db_path_a", "")
+    run_id_a = args.get("run_id_a")
+    db_path_b = args.get("db_path_b", "")
+    run_id_b = args.get("run_id_b")
+
+    if not all([db_path_a, run_id_a is not None, db_path_b, run_id_b is not None]):
+        return json.dumps({"error": "db_path_a, run_id_a, db_path_b, run_id_b are all required."})
+
+    row_a = _fetch_run(db_path_a, int(run_id_a))
+    row_b = _fetch_run(db_path_b, int(run_id_b))
+
+    if not row_a:
+        return json.dumps({"error": f"Run A not found: {db_path_a} #{run_id_a}."})
+    if not row_b:
+        return json.dumps({"error": f"Run B not found: {db_path_b} #{run_id_b}."})
+
+    params_a = _parse_params(row_a.get("description_json"))
+    params_b = _parse_params(row_b.get("description_json"))
+
+    def _summary(row: Dict) -> Dict:
+        return {
+            "db_path": row["db_path"],
+            "run_id": row["run_id"],
+            "experiment": row["exp_name"],
+            "sample": row["sample_name"],
+            "run_name": row["run_name"],
+            "timestamp": _epoch_to_iso(row["completed_timestamp"]),
+        }
+
+    return json.dumps({
+        "run_a": _summary(row_a),
+        "run_b": _summary(row_b),
+        "swept_diff": _diff_param_lists(params_a["swept"], params_b["swept"]),
+        "measured_diff": _diff_param_lists(params_a["measured"], params_b["measured"]),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -213,18 +375,32 @@ def _handle_qcodes_search(args: Dict[str, Any]) -> str:
 
 
 def register(ctx) -> None:
-    """Register QCoDeS search tool via Hermes plugin system."""
+    """Register all three QCoDeS tools with Hermes Agent."""
     ctx.register_tool(
         name="qcodes_search",
         toolset="qnoe-lab",
         schema=QCODES_SEARCH_SCHEMA,
-        handler=_tool_handler,
+        handler=_make_handler(_handle_qcodes_search),
         description="Search QCoDeS measurement registry",
+    )
+    ctx.register_tool(
+        name="qcodes_run_details",
+        toolset="qnoe-lab",
+        schema=QCODES_RUN_DETAILS_SCHEMA,
+        handler=_make_handler(_handle_qcodes_run_details),
+        description="Get swept/measured parameter details for a QCoDeS run",
+    )
+    ctx.register_tool(
+        name="qcodes_run_diff",
+        toolset="qnoe-lab",
+        schema=QCODES_RUN_DIFF_SCHEMA,
+        handler=_make_handler(_handle_qcodes_run_diff),
+        description="Diff swept/measured parameters between two QCoDeS runs",
     )
 
 
-def _tool_handler(args: Dict[str, Any] = None, **kwargs) -> str:
-    """Hermes tool handler wrapper."""
-    if args is None:
-        args = kwargs
-    return _handle_qcodes_search(args)
+def _make_handler(fn: Callable) -> Callable:
+    """Wrap a handler so it accepts both positional args dict and **kwargs."""
+    def handler(args: Dict[str, Any] = None, **kwargs) -> str:
+        return fn(args if args is not None else kwargs)
+    return handler

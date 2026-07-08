@@ -1,5 +1,5 @@
 # QNOE Lab Agent — Master TODO
-*Last updated: 2026-07-06 — BM25 hybrid search deployed, backfill pending*
+*Last updated: 2026-07-08 — BM25 deployed, orphan cleanup fixed, nightly cron disabled tonight*
 
 > Claude Code memory: [[HOME]] · Migration tracker: [[memory/hermes-migration]] · Decisions: [[memory/decisions]]
 
@@ -98,6 +98,7 @@
 - [x] Ingestion pipeline (Docling, CodeSplitter, IPYNBReader, QCoDeS extractor) ✅ *(2026-06-23 — `agent/ingest/run_ingest.py` + `agent/ingest/splitter.py` + `agent/ingest/qcodes_scanner.py`; all sources ingested: 41 GitHub repos, full server scan, 75,242 QCoDeS runs)*
 - [x] Scheduled re-indexing cron jobs (hash-based) ✅ *(nightly cron at 02:00 via `agent/indexing/nightly_run.py`; permission fix applied 2026-06-23)*
 - [x] **Orphan sweep:** ✅ *(2026-06-19 — `sweep_orphans()` in `run_ingest.py` + `task_orphan_cleanup()` in nightly run; 7-day grace period via `missing_files` table to avoid false positives from transient mount failures)*
+- [x] **Orphan cleanup double-scan bug fixed** ✅ *(2026-07-08 — crontab had `AGENT_DATA_DIR=/home/yzamir/qnoe_server_data` causing both repo_db and server_db to resolve to the same file. Fixed: removed `AGENT_DATA_DIR` override, added `SERVER_DATA_DIR=/home/yzamir/qnoe_server_data` instead. Repo DB now at `/opt/qnoe-agent/memory/episodic.db`, server DB at `/home/yzamir/qnoe_server_data/episodic.db`.)*
 - [x] **Notebook folder ingested:** ✅ *(W4 worker completed — 34,894 files, 380,582 chunks)*
 - [x] **Docling re-run — Papers & Books (W6):** ✅ *(2026-06-18 — 65 confirmed papers re-indexed with Docling via `--file-list /tmp/confirmed_papers_books.txt`)*
 - [x] **OCR — 1-chunk files from Docling re-runs (W2 + W12):** ✅ *(2026-06-18 — 1 file: `conductivity_nonlocal.pdf`; re-indexed with `DOCLING_OCR=1`; still 1 chunk — content is genuinely short)*
@@ -115,14 +116,16 @@
 - [x] Schema migrated: `text-sparse` field added to all 8 existing collections via `create_vector_name` ✅ *(2026-07-06)*
 - [x] Hybrid query (dense + BM25 prefetch → RRF fusion) implemented in `hermes/plugins/qnoe_rag/__init__.py` ✅ *(2026-07-06)*
 - [x] `agent/indexing/backfill_sparse.py` written (resumable, SQLite progress tracking) ✅ *(2026-07-06)*
-- [ ] **Run backfill** — 638K+ existing points have no sparse vectors yet. Command: `cd /opt/qnoe-agent && AGENT_DATA_DIR=/opt/qnoe-agent/memory QDRANT_URL=http://localhost:6333 nohup venv/bin/python3 -m agent.indexing.backfill_sparse > logs/backfill_sparse.log 2>&1 &`
+- [ ] **Run backfill** — 638K+ existing points have no sparse vectors yet. Run AFTER SP ingestion completes. Command: `cd /opt/qnoe-agent && AGENT_DATA_DIR=/opt/qnoe-agent/memory QDRANT_URL=http://localhost:6333 nohup venv/bin/python3 -m agent.indexing.backfill_sparse > logs/backfill_sparse.log 2>&1 &`
 - [ ] **Verify backfill complete** — query `SELECT collection, completed_at FROM sparse_backfill` in `memory/episodic.db`; all rows should have `completed_at` not null
 - [ ] **Run the 3 previously failing exact-term queries** to confirm hybrid search fixes them (device IDs, function names, paper titles)
+- [ ] **Re-enable nightly cron** (disabled 2026-07-08 to avoid interfering with SP ingestion) — `crontab -e`, remove `#DISABLED_TONIGHT ` prefix from 02:00 line. Do after SP ingestion completes.
+- [ ] **Run nightly tasks manually once** (after SP ingestion + cron re-enabled) — repos will re-index once since manifest DB was reset (hashes moved from server DB to repo DB). Command: `PYTHONPATH=/opt/qnoe-agent QDRANT_URL=http://localhost:6333 REPOS_DIR=/opt/qnoe-agent/repos SERVER_DATA_DIR=/home/yzamir/qnoe_server_data SERVER_ROOT=/ICFO/groups/NOE COLLECTIONS_CONFIG=/opt/qnoe-agent/config/repo_collections.yaml /opt/qnoe-agent/venv/bin/python -m agent.indexing.nightly_run`
 
 ### L3 — SQLite episodic
 - [x] `events` table ✅
 - [x] `audit_log` table ✅
-- [ ] Event logger + episodic context query (Python `EpisodicStore` class)
+- [x] ~~Event logger + episodic context query~~ — **superseded by Mem0 (L3.5)**. `log_event` + `get_episodic_context` exist in `agent/episodic.py` but are wired to dead LangGraph code. Hermes handles cross-session recall via Mem0; within-session via rolling window. `audit_log` table still needed for Phase 2 write permissions — see T2–T4 items above.
 
 ### L3.5 — Mem0 user memory *(new)*
 - [ ] `pip install mem0ai`
@@ -231,6 +234,12 @@
 - [x] Update AGENT_CODE_GUIDE.md ✅ *(2026-07-03 — complete rewrite for Hermes architecture)*
 - [x] Update HOME.md ✅ *(2026-07-03 — active workstream)*
 - [x] Update DGX_SETUP.md — add Hermes service setup steps ✅ *(2026-07-03 — §13 with 8 subsections)*
+- [x] **Migration audit** ✅ *(2026-07-08 — `MIGRATION_AUDIT.md`: 7 lost capabilities identified, 8 config drift items, 8 dead files archived to `archive/langgraph/`)*
+- [x] **Dead code archived** ✅ *(2026-07-08 — `graph.py`, `llm.py`, `main.py`, `prompts.py`, `state.py`, `teams.py`, `tools.py`, `retrieval.py` moved to `archive/langgraph/`)*
+- [x] **Config drift synced** ✅ *(2026-07-08 — repo now matches DGX: per-profile config.yaml files, tool_use_enforcement, disabled_toolsets, compression, multiplex_profiles, user_profiles.yaml, QCoDeS run_details/diff tools)*
+- [x] **L1 tool_use_enforcement fixed** ✅ *(2026-07-08 — set `true` on QTM + Photocurrent profiles, DGX + repo)*
+- [x] **L2 TOP_K regression fixed** ✅ *(2026-07-08 — changed back to 3 in qnoe_rag plugin, DGX + repo)*
+- [x] **Path validation restored** ✅ *(2026-07-08 — explicit ALLOWED_ROOTS instructions added to all 3 SOUL.md files with "Do NOT access" directive. Soft enforcement only — hard enforcement via plugin deferred to Phase 2)*
 
 ### Known Issues & Post-Launch Fixes
 
@@ -251,7 +260,7 @@
   - Fresh session baseline after changes: **~14,500 tokens** (from 17,015 before). Still ~57% overhead. Next: test Tool Slimmer (v0.6.5 on Hermes v0.17.0 — compatibility unconfirmed).
   - **Context breakdown (fresh QTM session):** tool schemas ~6,905 tok · RAG prefetch ~3,600 tok · SOUL.md ~720 tok · Hermes framing ~500 tok · history=0
   - **Tool Slimmer research:** exists ([alias8818/hermes-tool-slimmer](https://github.com/alias8818/hermes-tool-slimmer) v0.6.5), last tested on Hermes v0.15.1 (checked 2026-07-06), no v0.17 support yet. Cannot run alongside native Tool Search — must choose one.
-  - **[ ] Weekly check (ongoing):** Re-check Tool Slimmer releases each week until v0.17.x is listed in release notes. When supported: disable native Tool Search, install, verify token savings. Last checked: 2026-07-06 (v0.15.1 only).
+  - **[ ] Weekly check (ongoing):** Re-check Tool Slimmer releases each week until v0.17.x is listed in release notes. When supported: disable native Tool Search, install, verify token savings. Last checked: 2026-07-08 — Hermes Atlas shows max supported version is v0.14.0 (three minor versions behind). Still not usable.
 - [ ] **I2 — Some tools not used (e.g. online search)** — Test which built-in Hermes tools are available and functional. Verify web search, file tools, etc. Identify tools that aren't working and fix or disable.
 - [x] **I7 — "No home channel is set for Teams_Polling" warning** ✅ *(2026-07-03 — Added `TEAMS_POLLING_HOME_CHANNEL` env var to `start_hermes.sh` with Yuval's DM chat ID. Source: `gateway/run.py:9307` checks `_home_target_env_var()` → `TEAMS_POLLING_HOME_CHANNEL`. Needs service restart to take effect.)*
 - [x] **Tool calling as text** ✅ *(2026-07-03 — Root cause: `TOOL_USE_ENFORCEMENT_MODELS` in `prompt_builder.py:275` only includes GPT/Codex/Gemini/Qwen/etc — not Hermes 3. With `tool_use_enforcement: auto`, the enforcement guidance was never injected. Fixed: set `tool_use_enforcement: true` in config.yaml. Also compounds with I1 context bloat — at 19.5K tokens the model degrades further. Needs service restart to take effect.)*
@@ -261,6 +270,8 @@
 - [~] **I4 — SharePoint access + embedding** — LIVE (2026-07-03). Two sites indexed: `twisted-materials` (QTOM, SpectroMag, THz gas laser) + `noe-group` (all). Delta sync every 30 min via `SharePointPoller`. Nightly full sync as safety net. ONGOING: monitor delta sync health, verify nightly runs, expand site/folder coverage as needed.
   - [ ] **Verify current full sync run completed** (started 2026-07-08) — check log, confirm `processed` count, no auth errors, points land in `group-wide` collection with `text-sparse` vectors (new points should have sparse since ingestion code was updated)
   - [ ] **After sync + backfill both done:** spot-check a SharePoint-sourced point in Qdrant to confirm it has both dense and `text-sparse` vectors: `GET /collections/group-wide/points/{id}`
+  - [ ] **Run `ingest_sp_qcodes.py`** (one-time) after full SP sync completes — ingests QCoDeS `.db` files from SharePoint into `qcodes-runs`. See `memory/agent-code.md` for run command. Do NOT re-run after completion.
+- [x] **Nightly report → Teams DM** ✅ *(2026-07-08 — `agent/reporting/post_report.py` wired into nightly_run.py; sends HTML summary + error detail as Teams DM using same MSAL creds as SharePoint)*
 - [x] **I6 — QCoDeS run details & diff tools** ✅ *(2026-07-06)* — Added `qcodes_run_details` and `qcodes_run_diff` to `qnoe_qcodes` plugin. Both parse `description_json` in Python (not LLM) to extract swept/measured params with labels+units. Diff shows only_in_a / only_in_b / in_both for swept and measured separately. No CIFS access needed — queries `qcodes_registry` only. Deployed to `/opt/qnoe-agent/hermes/plugins/qnoe_qcodes/__init__.py`. Smoke tested against real registry (75,994 runs). **Needs service restart to activate.**
 
 ---

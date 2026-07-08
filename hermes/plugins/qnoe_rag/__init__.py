@@ -42,7 +42,7 @@ RERANK_MODEL_PATH = os.environ.get(
     "RERANK_MODEL_PATH", "/opt/qnoe-agent/models/cross-encoder-msmarco"
 )
 
-TOP_K = 5
+TOP_K = 3
 TOP_K_PER_COLLECTION = 20
 RERANK_POOL = 20
 RERANK_THRESHOLD = 0.5

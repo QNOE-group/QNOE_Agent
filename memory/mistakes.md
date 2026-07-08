@@ -1,5 +1,5 @@
 # Mistakes & Pitfalls
-*Last updated: 2026-07-08 (M32 added — empty/LFS files repeat every nightly run)*
+*Last updated: 2026-07-08 (M33-M34 added — migration audit findings)*
 
 > Bugs fixed and hard-won technical lessons. Check here before debugging similar issues.
 > Related: [[memory/deploy-patterns]] · [[memory/infrastructure]] · [[SETUP_LOG]]
@@ -218,6 +218,20 @@
 2. `fsize < 200` AND DOCLING extension AND first 40 bytes start with `"version https://git-lfs"` → same
 Files are recorded in the manifest with empty `point_ids`, so they're skipped on all future runs until the file actually changes on disk (new hash).
 **File:** `agent/ingest/run_ingest.py` — inside `ingest_directory` loop, after hash check.
+
+## M33 — tool_use_enforcement not applied to sub-profiles
+
+**Symptom:** QTM and Photocurrent profiles output tool calls as text (same as M23) even though orchestrator was fixed.
+**Root cause:** The M23 fix (`tool_use_enforcement: true`) was only applied to the orchestrator config on DGX. QTM and Photocurrent per-profile `config.yaml` still had `auto`. When users are routed to sub-profiles via `user_profiles.yaml`, they get the unfixed config.
+**Fix:** Set `tool_use_enforcement: true` in ALL per-profile configs (QTM + Photocurrent + orchestrator). Also commit per-profile configs to repo (they didn't exist in repo before this audit).
+**Lesson:** When fixing a config setting, apply it to ALL profiles — not just the one you tested on. Per-profile configs override the shared config.yaml.
+
+## M34 — TOP_K regressed from 3 to 5 during BM25 deployment
+
+**Symptom:** RAG injecting ~1,200 extra tokens per turn after BM25 hybrid search deployment.
+**Root cause:** The I1 context bloat fix changed `TOP_K=5` to `TOP_K=3` directly on DGX but never committed it to the repo. When the BM25 update was deployed from the repo to DGX, it overwrote the fix.
+**Fix:** Set `TOP_K = 3` in repo and re-deploy.
+**Lesson:** ALWAYS commit config/code changes to the repo immediately after deploying to DGX. DGX-only changes will be lost on next deploy.
 
 ## M25 — Qdrant snapshot timestamp lacks timezone
 

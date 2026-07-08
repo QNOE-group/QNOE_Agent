@@ -1,37 +1,72 @@
 # Agent Code
-*Last updated: 2026-07-06*
+*Last updated: 2026-07-08*
 
 > Agent source files, message flow, tools, and how the pieces connect.
-> Full guide: [[AGENT_CODE_GUIDE]] · Framework design: [[AGENT_FRAMEWORK]] · Being replaced by: [[memory/hermes-migration]]
+> Full guide: [[AGENT_CODE_GUIDE]] · Framework design: [[AGENT_FRAMEWORK]] · Migration audit: [[MIGRATION_AUDIT]]
 
-## File Map
+## File Map (Current — Hermes Agent)
 
 | File | Role |
 |---|---|
-| `agent/main.py` | Entry point — dev REPL + Teams mode |
-| `agent/graph.py` | LangGraph orchestrator + sub-agent nodes. Uses `chat_with_tools()` |
-| `agent/state.py` | `AgentState` TypedDict |
-| `agent/llm.py` | LLM client — `chat()` + `chat_with_tools()` (tool loop, max 5 rounds) |
-| `agent/tools.py` | `read_file` + `list_directory` tools with path validation |
-| `agent/prompts.py` | System prompts with FILE ACCESS block |
-| `agent/teams.py` | Teams connector — MSAL + Graph API polling (idle 10s, active 3s) |
-| `agent/retrieval.py` | Qdrant RAG + cross-encoder reranker (ms-marco-MiniLM-L-6-v2) |
-| `agent/episodic.py` | SQLite episodic store |
+| `hermes/config.yaml` | Shared Hermes config (model, toolsets, plugins, gateway) |
+| `hermes/profiles/qnoe-orchestrator/` | Orchestrator profile: SOUL.md, config.yaml, memories/ |
+| `hermes/profiles/qnoe-qtm/` | QTM sub-agent profile |
+| `hermes/profiles/qnoe-photocurrent/` | Photocurrent sub-agent profile |
+| `hermes/config/user_profiles.yaml` | Per-user → profile routing map |
+| `hermes/plugins/qnoe_rag/__init__.py` | Qdrant RAG memory provider (hybrid dense+BM25) |
+| `hermes/plugins/qnoe_qcodes/__init__.py` | QCoDeS registry tools (search, run_details, run_diff) |
+| `hermes/plugins/teams_polling/__init__.py` | Teams Graph API polling adapter |
+| `hermes/scripts/gateway_wrapper.py` | Plugin discovery bootstrap script |
+| `agent/reporting/post_report.py` | Nightly report → Teams DM |
+| `agent/ingest/ingest_sp_qcodes.py` | One-time SharePoint QCoDeS ingestion |
+| `agent/episodic.py` | SQLite episodic store (Phase 2 audit_log) |
+| `agent/teams_check.py` | Standalone Teams credential diagnostic |
 
-## Message Flow
+## Archived (Old LangGraph — `archive/langgraph/`)
 
-1. Teams polling picks up new message
-2. Orchestrator classifies → routes to sub-agent (QTM or Photocurrent)
-3. Sub-agent builds system prompt + RAG context
-4. `chat_with_tools()` calls vLLM with tool schemas
-5. Tool-call loop: up to 5 rounds of tool execution + re-prompting
-6. Final response sent back via Teams
+Dead code moved 2026-07-08 during migration audit:
+`graph.py`, `llm.py`, `main.py`, `prompts.py`, `state.py`, `teams.py`, `tools.py`, `retrieval.py`
+
+## Active Infrastructure (NOT agent layer — do not touch)
+
+| Directory | Purpose |
+|---|---|
+| `agent/ingest/` | Ingestion pipeline (run_ingest, splitter, embed, qcodes_scanner, sharepoint_sync) |
+| `agent/indexing/` | Nightly maintenance (nightly_run.py, backfill_sparse.py) |
+| `agent/watcher/` | SMB3 file watcher daemon |
+| `agent/reporting/` | Nightly report → Teams DM |
+
+## Message Flow (Hermes)
+
+1. Teams polling adapter picks up new DM
+2. Gateway routes to profile via `user_profiles.yaml` (multiplex_profiles)
+3. Profile loads SOUL.md + config.yaml
+4. RAG memory provider prefetches context from Qdrant (hybrid dense+BM25)
+5. Hermes calls vLLM with tool schemas + RAG context + user message
+6. Tool-call loop (built-in tools: read_file, list_directory, search_files, terminal, etc.)
+7. Response sent back via Teams
 
 ## Tool Definitions
 
-- `read_file(path)` — reads file content, 50KB cap
-- `list_directory(path)` — lists entries, max 200
-- Allowed roots: `/ICFO/groups/NOE`, `/opt/qnoe-agent/repos`
+### Built-in (Hermes)
+- `read_file`, `list_directory`, `search_files` — file access (no code-enforced path validation; SOUL.md restricts to allowed paths)
+- `terminal` — shell execution
+- `memory` — MEMORY.md persistence
+- `execute_code` — code execution
+- `patch`, `write_file` — file modification
+- `web_search`, `web_extract` — web access
+- `vision_analyze` — image analysis
+- `skill_manage`, `skills_list`, `skill_view` — skill system
+
+### Custom (plugins)
+- `rag_search(query, collection?)` — explicit RAG search
+- `qcodes_search(query?, sample?, experiment?, date_from?, date_to?, limit?)` — measurement registry
+- `qcodes_run_details(db_path, run_id)` — swept/measured parameter details
+- `qcodes_run_diff(db_path_a, run_id_a, db_path_b, run_id_b)` — compare two runs
+
+### Path Validation
+- **Old LangGraph:** Code-enforced `ALLOWED_ROOTS` in `tools.py` (hard boundary)
+- **Hermes:** SOUL.md instruction-level only (soft boundary). All profiles include explicit "Do NOT access paths outside `/ICFO/groups/NOE/` and `/opt/qnoe-agent/repos/`" instructions. No code enforcement.
 
 ## vLLM Model ID
 
@@ -47,7 +82,7 @@ Must use full path: `/opt/qnoe-agent/models/hermes-3-70b-awq`
 ## RAG Plugin (qnoe_rag)
 
 - **File:** `/opt/qnoe-agent/hermes/plugins/qnoe_rag/__init__.py`
-- **TOP_K = 3** (changed from 5 on 2026-07-03) — final chunks injected into context after reranking
+- **TOP_K = 3** (changed from 5 on 2026-07-03; regressed to 5 on 2026-07-08 during BM25 deploy; fixed back to 3 same day — see [[memory/mistakes#M34]])
 - **TOP_K_PER_COLLECTION = 20** — candidates fetched per collection before reranking
 - **RERANK_POOL = 20** — pool size passed to cross-encoder
 - **RERANK_THRESHOLD = 0.5** — minimum score; chunks below this are dropped
@@ -61,8 +96,23 @@ Must use full path: `/opt/qnoe-agent/models/hermes-3-70b-awq`
 - **Storage:** Each Qdrant point has two vectors: unnamed dense (`""`) + named sparse (`"text-sparse"`)
 - **Query:** `Prefetch(dense) + Prefetch(sparse, using="text-sparse")` → `FusionQuery(fusion=Fusion.RRF)` — all in one Qdrant call per collection
 - **Schema:** All 8 collections have `text-sparse` field (added 2026-07-06 via `create_vector_name`)
-- **Backfill:** `agent/indexing/backfill_sparse.py` — resumable, tracks progress in `sparse_backfill` SQLite table. Run once to populate sparse vectors for existing 638K+ points. **NOT YET RUN** as of 2026-07-06.
+- **Backfill:** `agent/indexing/backfill_sparse.py` — resumable, tracks progress in `sparse_backfill` SQLite table. Run once to populate sparse vectors for existing 638K+ points. **NOT YET RUN** as of 2026-07-08.
 - **pip path:** use `pip3` not `pip` in agent venv (`/opt/qnoe-agent/venv/bin/pip3`)
+
+## Nightly Report (agent/reporting/post_report.py)
+
+Sends the nightly maintenance report as a Teams DM after each nightly run. Already wired into `nightly_run.py` (2026-07-08).
+
+- **Input:** `/opt/qnoe-agent/logs/nightly_report.json` written by `nightly_run.py`
+- **Output:** Two Teams messages — HTML summary table + separate error/warnings detail message if any
+- **Auth:** Same MSAL ROPC creds as SharePoint (`secrets/sharepoint.env`)
+- **Config:** `secrets/report.env` — set `REPORT_CHAT_ID` (preferred) or `REPORT_TO_EMAIL`
+- **Dry-run:** `python -m agent.reporting.post_report --dry-run` prints HTML without sending
+
+## SharePoint QCoDeS Ingestion (agent/ingest/ingest_sp_qcodes.py)
+
+One-time script to pull QCoDeS `.db` files from SharePoint and index them into `qcodes-runs`.
+**Status: NOT YET RUN** — waiting for full SP sync to complete first.
 
 ## Active Toolsets & Context Budget (QTM profile, fresh session)
 
@@ -75,8 +125,5 @@ Must use full path: `/opt/qnoe-agent/models/hermes-3-70b-awq`
 | **Floor (empty history)** | **~11,725** |
 
 **Disabled toolsets (all profiles):** `tts`, `session_search`, `todo`, `cronjob`, `delegation`, `image_gen`
-
-**Active tools and schema sizes:**
-`terminal` 1,410 · `memory` 686 · `execute_code` 668 · `skill_manage` 1,031 · `clarify` 481 · `patch` 473 · `search_files` 438 · `process` 309 · `write_file` 279 · `read_file` 253 · `vision_analyze` 223 · `web_search` 190 · `web_extract` 170 · `skills_list` 71 · `skill_view` 223
 
 **Note:** `process` cannot be individually disabled — shares `terminal` toolset with `terminal`.
