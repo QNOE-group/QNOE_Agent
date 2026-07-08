@@ -66,6 +66,51 @@ PROFILE_COLLECTIONS: Dict[str, List[str]] = {
 DEFAULT_COLLECTIONS = ["group-wide", "qcodes-runs"]
 
 # ---------------------------------------------------------------------------
+# Mem0 per-user memory (library-in-provider; see MEM0_INTEGRATION.md / D13)
+# ---------------------------------------------------------------------------
+# Distilled per-user facts, keyed on the platform user_id, stored in a
+# dedicated Qdrant collection. RAG stays the single injector: prefetch()
+# emits these facts ahead of RAG chunks; sync_turn() writes new ones.
+
+MEM0_ENABLED = os.environ.get("MEM0_ENABLED", "1") == "1"   # kill-switch
+MEM0_TOP_K = 3                                              # facts injected per turn
+MEM0_COLLECTION = "episodic_memory"
+# vLLM served model id used by Mem0 for fact extraction — confirm via
+# `curl localhost:8000/v1/models`; override with MEM0_LLM_MODEL if it differs.
+MEM0_LLM_MODEL = os.environ.get("MEM0_LLM_MODEL", "hermes-3-70b")
+VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
+
+MEM0_CONFIG = {
+    "vector_store": {
+        "provider": "qdrant",
+        "config": {
+            "collection_name": MEM0_COLLECTION,
+            "host": "localhost",
+            "port": 6333,
+            "embedding_model_dims": 768,
+        },
+    },
+    "llm": {
+        "provider": "openai",                     # vLLM is OpenAI-compatible
+        "config": {
+            "model": MEM0_LLM_MODEL,
+            "openai_base_url": VLLM_BASE_URL,
+            "api_key": "not-needed",
+            "temperature": 0.1,
+            "max_tokens": 512,
+        },
+    },
+    "embedder": {
+        "provider": "huggingface",
+        "config": {
+            # Local path + offline-safe; matches qnoe_rag's own nomic loader.
+            "model": EMBED_MODEL_PATH,
+            "model_kwargs": {"trust_remote_code": True, "device": "cpu"},
+        },
+    },
+}
+
+# ---------------------------------------------------------------------------
 # Model loading (cached singletons)
 # ---------------------------------------------------------------------------
 
@@ -100,6 +145,16 @@ def _load_sparse_model():
     from fastembed import SparseTextEmbedding
 
     return SparseTextEmbedding(model_name="Qdrant/bm25")
+
+
+@lru_cache(maxsize=1)
+def _get_mem0():
+    """Lazy Mem0 singleton. Lazy + cached so import cost is paid once and a
+    Mem0/Qdrant failure cannot crash plugin discovery at startup."""
+    from mem0 import Memory
+
+    logger.info("Initializing Mem0 (%s)", MEM0_COLLECTION)
+    return Memory.from_config(MEM0_CONFIG)
 
 
 def _embed_sparse_query(text: str):
@@ -247,6 +302,18 @@ def _format_chunks(chunks: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _format_facts(facts) -> str:
+    """Format Mem0 user-facts, tagged distinctly from RAG chunks so the
+    model never confuses a user preference with a retrieved document."""
+    items = facts.get("results", facts) if isinstance(facts, dict) else facts
+    if not items:
+        return ""
+    lines = [f"- {m.get('memory', '')}" for m in items[:MEM0_TOP_K] if m.get("memory")]
+    if not lines:
+        return ""
+    return "## What I remember about you\n" + "\n".join(lines) + "\n\n"
+
+
 # ---------------------------------------------------------------------------
 # Tool schemas
 # ---------------------------------------------------------------------------
@@ -295,6 +362,10 @@ class QnoeRagProvider(MemoryProvider):
         self._prefetch_result: str = ""
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread: Optional[threading.Thread] = None
+        # One provider instance can serve multiple sessions (see
+        # on_session_switch), so key Mem0 per session_id -> user_id rather
+        # than a single self._user_id.
+        self._session_users: Dict[str, str] = {}
 
     @property
     def name(self) -> str:
@@ -314,11 +385,22 @@ class QnoeRagProvider(MemoryProvider):
         self._collections = PROFILE_COLLECTIONS.get(
             self._profile, DEFAULT_COLLECTIONS
         )
+        uid = kwargs.get("user_id") or kwargs.get("user_id_alt") or ""
+        if uid:
+            self._session_users[session_id] = uid
         logger.info(
-            "QnoeRag initialized for profile=%s, collections=%s",
+            "QnoeRag initialized for profile=%s, collections=%s, session=%s, user=%s",
             self._profile,
             self._collections,
+            session_id,
+            uid or "<none>",
         )
+
+    def _uid_for(self, session_id: str) -> str:
+        # Fallback: if no platform user_id was seen for this session, key
+        # Mem0 on session_id — degrades to per-conversation memory rather
+        # than crashing or bleeding memory across users.
+        return self._session_users.get(session_id) or session_id or "anon"
 
     def system_prompt_block(self) -> str:
         colls = ", ".join(self._collections)
@@ -343,9 +425,19 @@ class QnoeRagProvider(MemoryProvider):
             chunks = _run_retrieve(query, self._collections)
             result = _format_chunks(chunks)
 
-        if not result:
-            return ""
-        return f"## RAG Context\n{result}"
+        rag_block = f"## RAG Context\n{result}" if result else ""
+
+        # Per-user Mem0 facts, injected ahead of RAG. Must never break a turn.
+        mem_block = ""
+        if MEM0_ENABLED:
+            try:
+                uid = self._uid_for(session_id)
+                facts = _get_mem0().search(query, user_id=uid, limit=MEM0_TOP_K)
+                mem_block = _format_facts(facts)
+            except Exception as e:
+                logger.warning("Mem0 search failed: %s", e)
+
+        return (mem_block + rag_block) or ""
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         def _run():
@@ -370,8 +462,24 @@ class QnoeRagProvider(MemoryProvider):
         session_id: str = "",
         messages: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
-        # RAG is read-only — no writes needed
-        pass
+        # RAG itself is read-only. Per-user memory is written here: Mem0's
+        # add() calls the LLM to distil facts, so run it off the reply path
+        # in a daemon thread (like queue_prefetch) — never blocks the turn.
+        if not (MEM0_ENABLED and user_content):
+            return
+        uid = self._uid_for(session_id)
+
+        def _write():
+            try:
+                _get_mem0().add(
+                    [{"role": "user", "content": user_content},
+                     {"role": "assistant", "content": assistant_content}],
+                    user_id=uid,
+                )
+            except Exception as e:
+                logger.warning("Mem0 add failed: %s", e)
+
+        threading.Thread(target=_write, daemon=True, name="mem0-write").start()
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         return [RAG_SEARCH_SCHEMA]
