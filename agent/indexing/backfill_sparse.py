@@ -31,7 +31,7 @@ logging.basicConfig(
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 AGENT_DATA_DIR = os.environ.get("AGENT_DATA_DIR", "/opt/qnoe-agent/memory")
 MANIFEST_DB = os.path.join(AGENT_DATA_DIR, "episodic.db")
-SCROLL_BATCH = 200  # points per scroll page
+SCROLL_BATCH = 50  # points per scroll page (sparse vectors are large — 200 exceeds Qdrant's 32MB limit)
 
 
 def _get_backfill_conn() -> sqlite3.Connection:
