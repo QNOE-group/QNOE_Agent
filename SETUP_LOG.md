@@ -1521,3 +1521,21 @@ Live verification of gpt-oss-120b through Teams (user-driven), each failure diag
 
 **Merged to master:** `feature/gpt-oss-cutover` (a2036de), `feature/mem0-per-user` (0fd07ee + follow-ups), session docs + pilot-branch salvage (M39, harness, SETUP_LOG pilot section). Repo == production.
 **Multi-user reality:** Alexander Rothstein began using the agent organically during the round.
+
+## MVP-1 VERIFICATION + DECLARATION — 2026-07-10
+
+Per the rescope ([[AGENT_FRAMEWORK]] §9.4, [[MVP_VERIFICATION_PLAN]]): MVP-1 = the interactive read-only lab assistant; criteria #5/#6/#10 deferred to [[PHASE2_BACKLOG]] B8/B9/B10.
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Routing | ✅ | Unmapped→`qnoe-orchestrator` (all 8 collections, log 18:59) with correct persona; mapped→`qnoe-photocurrent` (log 19:03) with accurate sub-team persona; QTM routing exercised all day. Verified via temporary remap of Yuval (Phase A/B/C). |
+| 2 | RAG-code with paths | ✅ | QTM answers citing `iv_measurement.py`, `angle_vs_bias.py`, notebooks (2026-07-10 sessions) |
+| 3 | RAG-paper with citation | ✅ | PTE-vs-PV answer grounded in 5 distinct thesis/manuscript chunks (`Krystian/Thesis/*`), `rag_chars=8648` verified. Note: cited chunk numbers, not paths — SOUL refinement candidate. |
+| 4 | No-result honesty | ✅ | Registry hook: "run 75000 does not exist"; grounding rules; attempt-3 supercon answer scoped to groundable content only |
+| 7 | (recast) no phantom commands / honest off-topic | ✅ after 2 fix rounds | `/switch` never existed — removed from SOULs (confabulation trap); attempt 3: agent self-searched (6 tool turns) and answered scoped, with real sources. Rounds 1-2 failures produced the attribution rule + **M46 memory-poisoning discovery/fix** — the most valuable find of the round. |
+| 8 | (recast) /help + capability list | ✅ | `/help` = accurate platform list, no `/switch`; "what can you do" = accurate sub-team-specific lists (photocurrent list matched real repos/tools exactly) |
+| 9 | Parallel sessions, no bleed | ✅ | Yuval + Alexander concurrent 2026-07-10; Mem0 per-user isolation verified; caveat: M45 uid-fallback race under truly simultaneous turns (read-side only) |
+
+**Declared: MVP-1 COMPLETE (2026-07-10).** Production stack: gpt-oss-120b via llama.cpp (4×64K), Hermes gateway with 3 profiles, hybrid RAG + Mem0 + QCoDeS registry grounding, T0/T1 read-only.
+
+**Ride-along items still open (not MVP gates):** run-159 re-ask (expect 49), gate-sweep re-ask (expect run 848), colleague Mem0-isolation re-check, I9 find_file round-trip, PPTX Gantt update before PI presentation.

@@ -54,5 +54,5 @@
 
 ## Active Workstream
 
-**gpt-oss-120b in production (2026-07-10)** — full model cutover done: llama.cpp serves gpt-oss-120b MXFP4 (4×64K slots, 46.6 tok/s, native tool calls). Verification round done, five silent bugs fixed same day (M37, M40-M45). See [[memory/decisions#D15]], [[SETUP_LOG]], [[CONTEXT_PRESSURE_REPORT]].
-Remaining: run-159 re-test (expect 49), colleague Mem0-isolation check, photocurrent round-trip, core-papers ingestion + web-access decision ([[TODO]]).
+**MVP-1 DECLARED (2026-07-10)** — all rescoped acceptance criteria pass (see [[SETUP_LOG]] declaration section). Stack: gpt-oss-120b via llama.cpp (4×64K), 3 Hermes profiles, hybrid RAG + Mem0 + QCoDeS registry grounding, T0/T1 read-only. Verification round surfaced and fixed M44-M46 (incl. Mem0 memory poisoning).
+Next: Phase 2 planning ([[PHASE2_BACKLOG]] — B8/B9/B10 first candidates), ride-along re-tests in [[TODO]], PPTX Gantt before PI presentation.

@@ -20,7 +20,7 @@
 
 ## Open verifications & near-term items (2026-07-10, post-cutover)
 
-- [ ] **MVP-1 declaration** — run [[MVP_VERIFICATION_PLAN]] (4 tests: photocurrent routing + orchestrator default, RAG-paper citation, off-topic honesty, /help + "what can you do"). Criteria #5/#6/#10 deferred to [[PHASE2_BACKLOG]] B8/B9/B10 (2026-07-10 user decision). Then: SETUP_LOG declaration section + update PPTX Gantt before PI presentation.
+- [x] **MVP-1 DECLARED (2026-07-10)** ✅ — all rescoped criteria pass; evidence table in [[SETUP_LOG]]. Verification round found+fixed M44 (registry perms), M45 (Mem0 anon-uid), M46 (memory poisoning). Ride-alongs below remain.
 
 - [ ] **Re-ask run 159** through the agent — expect **49** databases (was 35 before the M44 permission fix) with `/ICFO/...` paths in the sample.
 - [ ] **Re-ask the gate-sweep question** — expect run 848 `gate_sweep_Vg1.4999…_to_-0.3` (2026-05-19, Tip5Sample9) via the new `swept_parameter` filter, with run name + swept/measured params stated (reporting rule).
