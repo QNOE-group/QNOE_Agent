@@ -154,6 +154,13 @@
 **Fix:** `sudo chown qnoe-ai:qnoe-ai /opt/qnoe-agent/logs/`
 **Lesson:** Always check group ownership matches the writing user's group, not just the directory owner.
 
+## M25 — Qdrant snapshot timestamp lacks timezone
+
+**Symptom:** `TypeError: can't compare offset-naive and offset-aware datetimes` in `task_qdrant_snapshot`.
+**Root cause:** Qdrant returns `creation_time` without timezone suffix (e.g., `2026-07-03T08:24:04`). Code does `.replace("Z", "+00:00")` but there's no `Z` to replace. `fromisoformat` returns naive datetime, compared against tz-aware `cutoff`.
+**Fix:** Added `if created.tzinfo is None: created = created.replace(tzinfo=timezone.utc)` after parsing.
+**File:** `/opt/qnoe-agent/agent/indexing/nightly_run.py` line ~80.
+
 ## M26 — SharePoint group IDs mapped to wrong site names
 
 **Symptom:** Config called `ac001f4d` "qnoe-main" and `26a94606` "qnoe-second" — arbitrary names assigned without checking actual group display names.
@@ -233,14 +240,6 @@ Files are recorded in the manifest with empty `point_ids`, so they're skipped on
 **Fix:** Set `TOP_K = 3` in repo and re-deploy.
 **Lesson:** ALWAYS commit config/code changes to the repo immediately after deploying to DGX. DGX-only changes will be lost on next deploy.
 
-## M25 — Qdrant snapshot timestamp lacks timezone
-
-**Symptom:** `TypeError: can't compare offset-naive and offset-aware datetimes` in `task_qdrant_snapshot`.
-**Root cause:** Qdrant returns `creation_time` without timezone suffix (e.g., `2026-07-03T08:24:04`). Code does `.replace("Z", "+00:00")` but there's no `Z` to replace. `fromisoformat` returns naive datetime, compared against tz-aware `cutoff`.
-**Fix:** Added `if created.tzinfo is None: created = created.replace(tzinfo=timezone.utc)` after parsing.
-**File:** `/opt/qnoe-agent/agent/indexing/nightly_run.py` line ~80.
-
-<<<<<<< HEAD
 ## M35 — Provence reranker is too slow on the Spark CPU (32× cross-encoder)
 
 **Context:** Evaluated `naver/provence-reranker-debertav3-v1` (0.4B DeBERTa-v3, prune+rerank in one model) as a drop-in replacement for the cross-encoder reranker in `qnoe_rag`, to cut RAG injection tokens.
@@ -271,13 +270,17 @@ platform_toolsets:
 **Symptom:** Asked "what parameters were recorded in QCoDeS run 75000?", the agent gave a detailed, plausible answer (experiment name, sample, params, timestamp). **Run 75000 does not exist** — max `run_id` in the registry is 59,477. No QCoDeS tool call was made; the model stitched details from semantically-similar RAG chunks.
 **Lesson:** existence questions can't be answered from similarity search. For run-id lookups the agent must call the QCoDeS tools (via the tool_search bridge) and report "not found" honestly. Candidate fix: SOUL instruction + re-test (open item).
 
-## M43 — systemd service crash-loops in 2ms because its log file is owned by the wrong user (2026-07-10)
+## M39 — gpt-oss-120b overcommits the 128 GB unified box; vLLM util is measured vs TOTAL device memory, not free RAM (2026-07-10)
 
-**Symptom:** during the gpt-oss cutover, `vllm.service` (which now runs `start_llamacpp.sh` as `qnoe-ai`) showed `activating (auto-restart)`, `status=1/FAILURE`, `CPU: 2ms` — dying instantly, before loading any model. `/v1/models` returned nothing, no `llama-server` process. The log file `logs/llamacpp.log` still showed a **stale** boot (frozen, not truncated).
-**Cause:** the launch script redirects stdout with `> /opt/qnoe-agent/logs/llamacpp.log`. That file had been created by a **manual test boot run as `yzamir`** (owner `yzamir:Domain Users`, mode 644). When systemd ran the script as `qnoe-ai`, the shell could not open the file for writing (truncate) → script exits 1 before the `exec` → restart loop. The 2ms CPU + un-truncated stale log are the tell.
-**Fix:** `sudo chown qnoe-ai:qnoe-ai /opt/qnoe-agent/logs/llamacpp.log` (or delete it so the service creates it fresh), then `sudo systemctl restart`.
-**Lesson:** any file a manual test boot writes into a service-owned dir (esp. the redirect target log) must be chowned back to the service user before systemd takes over — a service-user process cannot truncate a file owned by another user even in a group-writable dir if the file itself isn't group-writable. When a service dies with ~2ms CPU and a frozen log, suspect the log redirect, not the model.
-=======
+**Context:** gpt-oss-120b pilot (see `GPT_OSS_PILOT_PLAN.md`). Model = MXFP4 MoE, **60.8 GiB weights**. Box = single GB10, **128 GB unified** memory shared by GPU+CPU, with Qdrant (~8 GB) + OS/services (~8 GB) already resident.
+**Symptom:** vLLM loaded all weights, then during post-load KV-pool allocation / CUDA-graph capture the box drove to **0 available RAM**, fell into full swap (15 GB), and **thrashed into unresponsiveness** — `ssh` failed with *"Connection timed out during banner exchange"* (sshd alive but starved; can't get a scheduling window). Persisted ~40–50 min; only recovered when the OOM-killer finally reaped vLLM.
+**Root cause:** On unified memory, vLLM's `--gpu-memory-utilization` (default ~0.9) budgets against **total device memory (128 GB)**, but it does NOT subtract RAM already used by Qdrant + OS (which live in the *same* unified pool). So default util tried to reserve ~115 GB (61 weights + ~54 KV) on top of ~16 GB already used → **~131 GB > 128 GB physical → OOM/thrash.**
+**Second trigger:** CUDA-graph capture (80 batch sizes up to 1024) adds a large transient memory peak on top of weights+KV. First attempt OOM-killed during capture. `--enforce-eager` removes that peak but did NOT prevent the KV-alloc overcommit at util 0.78. A confound: attempt-2 was launched **before memory from attempt-1's crash had fully settled** (`Available RAM: 44 GiB` at load), guaranteeing overcommit.
+**What would fit (untested, for a supervised retry only):** `--gpu-memory-utilization 0.55`–`0.60` (budget ~70–77 GB = 61 weights + ~9–16 GB KV), `--enforce-eager`, `--max-model-len 65536` (not 131072), `--max-num-seqs 2`, and **launch only when `free -g` shows ≥110 GB available** (wait for the previous process's memory to reclaim). Net system use ~93 GB < 128 → safe. KV pool is then small (~9–16 GB) → limited concurrency/context.
+**Recovery lesson:** A GB10 in full-swap-death does not reliably yield an `ssh` banner-exchange window; repeated *single* connection attempts eventually land only once the OOM-killer frees the largest RSS (vLLM). Do NOT connection-storm a starved shared box (auto-mode blocks it). The clean recovery is a **hard reboot** if enabled services auto-start, or a single-connection loop that `pkill`s vLLM then `systemctl start vllm.service`.
+**Prevention:** never launch a second large model without first confirming `free -g` available ≥ weights+headroom; treat `gpu-memory-utilization` on unified memory as a fraction of *total* that must also leave room for all non-vLLM residents.
+**Outcome:** gpt-oss-120b NOT viable as a drop-in on this single box at target context. Production stays on Hermes-3-70B AWQ. Weights kept on disk at `/opt/qnoe-agent/models/gpt-oss-120b`.
+
 ## M40 — The "~19.5K tool-calling cliff" was prose-fallback, not a model limit (2026-07-10)
 
 **What we believed (D11 era):** Hermes-3 loses structured `tool_calls` past ~19.5K prompt tokens (worked at 359, failed at ~19.5K live) — treated as a hard model ceiling; sized the whole context discipline around it.
@@ -304,6 +307,13 @@ Closes roadmap step 5 of [[CONTEXT_PRESSURE_REPORT]]. Numbering note: M39 (unifi
 **Cause:** `pkill -f PATTERN` matches full command lines — including the remote bash running the compound command, whose cmdline contains the pattern string. The shell kills itself (exit 255, no output) and the intended target can survive. `2>/dev/null` + retry loops made it look like transient SSH flakiness.
 **Fix:** self-safe patterns: `pkill -9 -f 'llama[-]server'` (bracket breaks self-match) or `pkill -x <comm>`. **Always verify the kill**: `pgrep -cf 'llama[-]server' || echo ZERO` — and verify what is actually serving the port (`curl /v1/models`), not just `systemctl is-active` (a service can be "active" while crash-looping on a taken port).
 
+## M43 — systemd service crash-loops in 2ms because its log file is owned by the wrong user (2026-07-10)
+
+**Symptom:** during the gpt-oss cutover, `vllm.service` (which now runs `start_llamacpp.sh` as `qnoe-ai`) showed `activating (auto-restart)`, `status=1/FAILURE`, `CPU: 2ms` — dying instantly, before loading any model. `/v1/models` returned nothing, no `llama-server` process. The log file `logs/llamacpp.log` still showed a **stale** boot (frozen, not truncated).
+**Cause:** the launch script redirects stdout with `> /opt/qnoe-agent/logs/llamacpp.log`. That file had been created by a **manual test boot run as `yzamir`** (owner `yzamir:Domain Users`, mode 644). When systemd ran the script as `qnoe-ai`, the shell could not open the file for writing (truncate) → script exits 1 before the `exec` → restart loop. The 2ms CPU + un-truncated stale log are the tell.
+**Fix:** `sudo chown qnoe-ai:qnoe-ai /opt/qnoe-agent/logs/llamacpp.log` (or delete it so the service creates it fresh), then `sudo systemctl restart`.
+**Lesson:** any file a manual test boot writes into a service-owned dir (esp. the redirect target log) must be chowned back to the service user before systemd takes over — a service-user process cannot truncate a file owned by another user even in a group-writable dir if the file itself isn't group-writable. When a service dies with ~2ms CPU and a frozen log, suspect the log redirect, not the model.
+
 ## M44 — Production agent couldn't read the lab-server QCoDeS registry (700 home dir) (2026-07-10)
 
 **Symptom:** live run-159 answer said "35 databases" (SharePoint entries only); true total is 49. All sample rows were `/tmp/qnoe-sharepoint-qcodes/` paths.
@@ -317,4 +327,4 @@ Closes roadmap step 5 of [[CONTEXT_PRESSURE_REPORT]]. Numbering note: M39 (unifi
 **Diagnosis:** the per-turn injection log (added same day) showed `mem_facts=0 … session=''` — Hermes core (`turn_context.py:392`) calls `memory_manager.prefetch_all(_query)` WITHOUT `session_id`, so the plugin's `_uid_for("")` fell through to uid **"anon"** → empty search. The write path (`sync_all`) DOES pass session_id, which is why storage looked healthy. The original "verification" passed only because the fact was still inside the conversation window.
 **Fix (plugin-side, survives Hermes upgrades):** remember `self._last_uid` in `initialize()` (which gets session+user every turn) and fall back to it when `session_id` is empty. Caveat: truly concurrent multi-user turns could briefly attribute a read to the wrong user — read-side only, acceptable; revisit if Hermes core ever passes session_id (candidate upstream one-liner).
 **Lessons:** (1) verify memory recall in a FRESH session, not the session where the fact was stated; (2) per-turn injection logging (mem_facts / qcodes_block / rag_chars / session) is what made this diagnosable in one look — keep it.
->>>>>>> feature/mem0-per-user
+
