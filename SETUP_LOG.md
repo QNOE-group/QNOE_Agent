@@ -1450,3 +1450,28 @@ Executed [[CONTEXT_EXECUTION_PLAN]] (from [[CONTEXT_PRESSURE_REPORT]] §6). Bran
 - Offline eval, 20 QNOE queries (vLLM stopped to free RAM, restarted after): **token reduction 72%** (1631→454 top-3 tok, PASS), **answer survival 20/20** (PASS), **cpu latency 32.5× cross-encoder** (~22s/query vs 0.67s, **FAIL** ≤2×). Provence 0.4B DeBERTa on the Spark CPU is too slow; also exceeds the RAG prefetch 10s join timeout. Per plan §3.2 AND-gate → STOP, no deploy. `qnoe_rag` unchanged. Full report: `logs/provence_eval.md`.
 
 **Not done (out of scope / gated):** Mem0 deploy, nightly cron re-enable, nightly SP task, steps 4-6. Leftovers on DGX: `/home/yzamir/provence_dl` (1.74GB, safe to delete), unused `nltk` in agent venv.
+
+---
+
+## gpt-oss-120b pilot (Roadmap Step 6) — 2026-07-10 — VERDICT: FAIL / BLOCKED (hardware memory ceiling); production restored
+
+Executed `GPT_OSS_PILOT_PLAN.md`. Branch `feature/gpt-oss-pilot` off master; isolated worktree.
+
+**Download (DONE):** `openai/gpt-oss-120b` → `/opt/qnoe-agent/models/gpt-oss-120b`, 15 safetensors = **65.2 GB MXFP4** (`GptOssForCausalLM`, quant `mxfp4`, max_pos 131072). Removed the useless `metal/` + `original/` dirs. Owned qnoe-ai:qnoe-ai.
+
+**Stack selection (deviation from plan §1/§2 order):** Used the **existing venv vLLM 0.22.1** (fallback path) as primary, NOT the NVIDIA container. Rationale: this vLLM build already has native `gpt_oss` support — it auto-detects `gpt_oss_mxfp4`, auto-selects the **MARLIN** MXFP4 MoE backend (the exact GB10-safe path the plan wanted, log: `Using 'MARLIN' Mxfp4 MoE backend`), and auto-configures the `openai_gptoss` reasoning parser + harmony tool path (no parser flags needed). It needed no ~15 GB container pull and directly probes the SM121 garble concern. `VLLM_MXFP4_BACKEND` env var is unknown/ignored by this build (harmless). `yzamir` IS in the docker group, so the NVIDIA container (`nvcr.io/nvidia/vllm:26.06-py3`, public/guest-pullable) remains available for a future supervised attempt.
+
+**Hermes-3 baseline (captured live before stopping prod, `/tmp/probe_hermes3.md`):** decode **5.8 tok/s** (450-tok gen, 3×); TTFT ~10K prompt cold **22.8 s** / warm (prefix-cached) 0.45–0.59 s; **tool-calls held structured at 400 / 8.3K / 16.4K / 32.4K** prompt tokens in the bare probe → the documented ~19.5K "cliff" is an agent-integration/prose-fallback effect (M23), not a raw parser limit.
+
+**INCIDENT — gpt-oss never served; box hung twice.**
+- Attempt 1 (`--max-model-len 131072 --max-num-seqs 4`, default util, graphs on): loaded all weights (395 s, disk-bound), then **OOM-killed during CUDA-graph capture** (80 sizes up to batch 1024).
+- Attempt 2 (`--enforce-eager --gpu-memory-utilization 0.78 --max-model-len 131072`): loaded weights, then during KV-pool allocation drove the box to **0 available RAM → full swap → swap-death hang**. `ssh` failed with "Connection timed out during banner exchange" (sshd starved) for ~40–50 min; recovered only when the OOM-killer reaped vLLM. (Confound: the workstation's `Z:` drive dropped mid-incident, briefly making the local shell itself fail — see report.)
+- **Root cause (M39 / D14):** on the 128 GB **unified** box, vLLM's `--gpu-memory-utilization` budgets vs **total device memory**, not free RAM — it does NOT subtract Qdrant (~8 GB) + OS. 60.8 GiB weights + KV pool + those residents overcommit 128 GB. Attempt-2 also launched before attempt-1's memory had reclaimed (`Available RAM: 44 GiB` at load).
+
+**Decision gate:** FAIL — coherence/decode/tool-cliff/acceptance could not be measured because the model never served a token. Benchmark vs Hermes-3 therefore not obtained. **No cutover.** gpt-oss weights kept on disk for a **supervised-only** retry.
+
+**Production restore (DONE & VERIFIED):** killed pilot vLLM, `scripts/start_vllm.sh` untouched (still Hermes-3 AWQ 64K/fp8), `systemctl start vllm.service` + `restart qnoe-hermes.service`; both `active`; endpoint serves `hermes-3-70b-awq`; coherence probe OK.
+
+**Recommendation for a supervised retry (user window):** `--gpu-memory-utilization 0.55 --max-model-len 65536 --enforce-eager --max-num-seqs 2`, launch only when `free -g` available ≥110 GB; or the NVIDIA container. Even so the KV pool is small (~9–16 GB) → limited concurrency; the two-Spark clustering is the real path to a 120B.
+
+**Harness committed** (`benchmark/pilot_probe.py`, `gen_context.py`, `accept_run.py`, `scripts/start_vllm_gptoss.sh`). Acceptance injection contexts were generated (`/tmp/accept_ctx.json`; case1 registry block correctly says run 75000 does not exist) but never run against gpt-oss.
