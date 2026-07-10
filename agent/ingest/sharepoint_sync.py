@@ -602,7 +602,7 @@ def delta_sync(site_cfg: dict, cfg: dict, token: str) -> dict:
     client = QdrantClient(url=QDRANT_URL)
     sp_conn = _get_sp_manifest_conn()
     temp_dir = Path(cfg.get("temp_dir", "/tmp/qnoe-sharepoint/"))
-    stats: dict = {"processed": 0, "skipped": 0, "deleted": 0, "errors": 0, "failed_files": []}
+    stats: dict = {"processed": 0, "new": 0, "updated": 0, "skipped": 0, "deleted": 0, "errors": 0, "failed_files": []}
 
     token_ts = time.monotonic()
     drive_map = _resolve_drive_ids(site_cfg, token)
@@ -640,10 +640,17 @@ def delta_sync(site_cfg: dict, cfg: dict, token: str) -> dict:
             if "file" not in item:
                 continue
             token, token_ts = _fresh_token(cfg, token, token_ts)
+            is_new_item = sp_conn.execute(
+                "SELECT 1 FROM sp_manifest WHERE item_id = ?", (item["id"],)
+            ).fetchone() is None
             try:
                 ok = _process_item(item, site_cfg, drive_id, temp_dir, token, client, sp_conn)
                 if ok:
                     stats["processed"] += 1
+                    if is_new_item:
+                        stats["new"] += 1
+                    else:
+                        stats["updated"] += 1
                 else:
                     stats["skipped"] += 1
             except Exception as exc:
