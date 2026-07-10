@@ -1,5 +1,5 @@
 # Decisions Log
-*Last updated: 2026-07-08*
+*Last updated: 2026-07-10*
 
 > Architectural and design decisions with reasoning. Append new entries at the bottom.
 > Related: [[memory/mistakes]] · [[HANDOFF#All design decisions — summary]]
@@ -107,3 +107,15 @@
 - Mem0 keyed on platform `user_id` (available in `initialize()` kwargs); dedicated Qdrant `episodic_memory` collection (768-dim); LLM = vLLM, embedder = local nomic.
 **Reasoning:** Library-inside-provider avoids the exclusive-provider conflict with RAG and needs no custom memory logic (Mem0 owns fact extraction/dedup/storage). Net context ≈ **−100 tok/turn** (keep MEMORY.md, −500 USER.md +400 Mem0 facts) — the win is correctness (true per-user memory), not tokens. See [[MEM0_INTEGRATION]].
 **Status update (2026-07-08):** Implemented on branch `feature/mem0-per-user` (2 commits). Validated on DGX without vLLM: mem0ai **2.0.11** installed (additive; note protobuf 7→6 downgrade), `episodic_memory` collection created, config schema + offline embedder + write/read round-trip + per-user isolation all confirmed. mem0 2.x `search()` needs `filters={"user_id":..}`/`top_k=` (code fixed). Deploy staged in `scripts/deploy_mem0.sh` — NOT applied; pending a vLLM window after the SharePoint full sync. Remaining: `add(infer=True)` LLM test + live deploy/restart.
+
+## D14 — `find_file`: unified CIFS + SharePoint file search over ingestion manifests (not live find / Graph)
+
+**Date:** 2026-07-10
+**Context:** Users need to locate a file by name/path. The agent could `find` on the CIFS mount, but SharePoint files never touch the filesystem (streamed → embedded → deleted), so they were unfindable by name. Wanted one tool covering both stores.
+**Decision:** New `qnoe_files` plugin exposing `find_file(query, source?, limit?)` that runs **local SQLite `LIKE` queries over the ingestion manifests** — `index_manifest.file_path` (CIFS: server + repo `episodic.db`) and `sp_manifest.item_path`/`web_url` (SharePoint) — and merges results. `source ∈ {all,cifs,sharepoint}`; returns a filesystem path (CIFS) or web URL (SharePoint).
+**Rejected alternatives:**
+- **Live `find` over CIFS** — a full-mount scan takes hours (per [[memory/ingestion#QCoDeS Scanner]]); unusable for an interactive tool.
+- **Live Graph Search API for SP** — needs a token + network per query; the manifest is already synced every 30 min and is local/offline.
+**Supporting change:** added a `web_url` column to `sp_manifest` (payloads already carried the URL in `source`; the manifest didn't). Written on every sync via `_record_item`; existing 22,102 rows backfilled from Qdrant payloads by `agent/indexing/backfill_sp_weburl.py` (idempotent, read-only Qdrant retrieves + SQLite update — **adds zero Qdrant points**). Backfill also wired into nightly `task_sync_sharepoint` as a safety net.
+**Trade-off:** coverage = *indexed* files only (supported extensions, non-excluded, ≤ up to 30 min stale). Files never ingested (e.g. `.xlsx`, images) won't appear — acceptable; live `find`/Graph remain an optional future fallback.
+**Files:** new `hermes/plugins/qnoe_files/__init__.py`, new `agent/indexing/backfill_sp_weburl.py`; changed `agent/ingest/sharepoint_sync.py`, `agent/indexing/nightly_run.py`. Deployed + backfilled 2026-07-10 (commit `2b7fd26`). Env knobs: `CIFS_MANIFEST_DBS` (`:`-sep), `SP_MANIFEST_DB`. Pending: human Teams round-trip (TODO I9).
