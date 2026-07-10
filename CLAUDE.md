@@ -58,7 +58,7 @@ A fully local, proactive AI agent system for the QNOE group (ICFO Barcelona, PI:
 ┌──────────────────────────────────────────┐
 │  gpt-oss-120b (MXFP4) via llama.cpp      │  localhost:8000, 4×64K slots
 ├──────────────────────────────────────────┤
-│  LangGraph — orchestrator + 6 sub-agents │  SqliteSaver checkpointer
+│  Hermes Agent — gateway + 3 profiles     │  per-user routing, sessions
 ├──────────────────────────────────────────┤
 │  Open shell — universal execution layer  │  all permissions enforced here
 ├──────────────────────────────────────────┤
@@ -69,7 +69,7 @@ A fully local, proactive AI agent system for the QNOE group (ICFO Barcelona, PI:
 └──────────────────────────────────────────┘
 ```
 
-**One Teams bot** routes messages to one of six sub-agents (QED, Superconductivity, Photocurrent, QTM, QSIM, XCHIRAL) via the orchestrator (QNOE-Agent). Sub-agents share one vLLM endpoint; persona and scope are controlled by system prompts.
+**One Teams bot** routes messages per-user to a Hermes profile (orchestrator, QTM, photocurrent; other sub-teams planned). Profiles share one llama.cpp endpoint; persona and scope are controlled by SOUL.md system prompts. (LangGraph was replaced by Hermes Agent — see `memory/hermes-migration.md`.)
 
 ---
 

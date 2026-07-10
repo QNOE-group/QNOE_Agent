@@ -46,7 +46,7 @@
 | [[CONTEXT_PRESSURE_REPORT]] | Context-pressure analysis + roadmap (KV math, demand reduction, MoE model swap, 2-Spark scale-out) — user-accepted 2026-07-09 |
 | [[CONTEXT_EXECUTION_PLAN]] | Hand-off plan for roadmap steps 1-3 (vLLM 64K+fp8, toolset slimming, Provence) — executed 2026-07-09/10 |
 | [[GPT_OSS_CUTOVER_PLAN]] | Hand-off plan for the production cutover to gpt-oss-120b via llama.cpp — executed 2026-07-10 |
-| [[GPT_OSS_PILOT_PLAN]] | Hand-off plan for roadmap step 6: pilot gpt-oss-120b as generation model — executing agent launched 2026-07-10 |
+| [[GPT_OSS_PILOT_PLAN]] | Pilot plan for gpt-oss-120b — vLLM path FAILED (M39/M41); llama.cpp path won → see [[GPT_OSS_CUTOVER_PLAN]] |
 | [[MEM0_INTEGRATION]] | Program to add per-user Mem0 memory inside `qnoe_rag` (see [[memory/decisions#D13]]) |
 | [[REPO_MAPPING]] | Repo → Qdrant collection mapping |
 | [[WATCHER_PLAN]] | SMB3 watcher daemon design |

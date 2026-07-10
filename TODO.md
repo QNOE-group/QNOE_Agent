@@ -13,10 +13,8 @@
 - [x] **Mem0 deploy — DONE + LIVE-VERIFIED (2026-07-10).** Deployed via `deploy_mem0.sh`; recall verified end-to-end after the anon-uid fix (mistakes M45); extraction max_tokens 512→1536 for gpt-oss; per-turn injection logging added. Isolation check by a second user still pending.
 - [ ] **I9 — find_file Teams round-trip** (from D14, `qnoe_files` plugin, deployed 2026-07-10 by parallel session) — human verification pending.
 - [x] Re-enable nightly cron / nightly SharePoint task ✅ *(2026-07-09, parallel session — nightly ran 2026-07-10, report delivered)*
-- [x] **Step 6 — gpt-oss-120b pilot → PRODUCTION CUTOVER (2026-07-10).** Pilot passed; cutover executed on branch `feature/gpt-oss-cutover`. Production `localhost:8000` now serves **gpt-oss-120b MXFP4 via llama.cpp** (unit `vllm.service` name kept, runs `scripts/start_llamacpp.sh`). 4×64K KV pool (non-unified), decode 46.6 tok/s, 3 concurrent @ 25.5 tok/s, all 6 gates passed. Hermes-3 retained as rollback. See [[memory/decisions#D15]], [[SETUP_LOG]], [[GPT_OSS_CUTOVER_PLAN]]. **Pending: human Teams round-trip verifications before merge to master.**
+- [x] **Step 6 — gpt-oss-120b pilot → PRODUCTION CUTOVER (2026-07-10).** Pilot passed; cutover executed on branch `feature/gpt-oss-cutover`. Production `localhost:8000` now serves **gpt-oss-120b MXFP4 via llama.cpp** (unit `vllm.service` name kept, runs `scripts/start_llamacpp.sh`). 4×64K KV pool (non-unified), decode 46.6 tok/s, 3 concurrent @ 25.5 tok/s, all 6 gates passed. Hermes-3 retained as rollback. See [[memory/decisions#D15]], [[SETUP_LOG]], [[GPT_OSS_CUTOVER_PLAN]]. Merged to master 2026-07-10 (a2036de); verification round done same evening (see SETUP_LOG).
 - [x] Steps 4-5 ✅ *(2026-07-10 — prefix caching verified: 81.5% hit rate under vLLM, warm-TTFT 0.13s under llama.cpp confirms its prompt cache too; "19.5K cliff" resolved as prose-fallback, [[memory/mistakes#M40]])*
-
----
 
 ---
 
