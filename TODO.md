@@ -12,7 +12,8 @@
 - [x] **Step 3 — Provence reranker eval.** Done; **gate FAILED on latency → NOT deployed.** 72% token reduction + 20/20 survival, but 32.5× cpu latency (~22s/query) on the Spark. qnoe_rag stays on cross-encoder. Fallback LLMLingua-2 is a user decision. Eval: `logs/provence_eval.md`.
 - [ ] **Mem0 deploy** (`deploy_mem0.sh`) — was waiting on the 64K vLLM window; window is now live. Still pending; user's call. OUT OF SCOPE of this run.
 - [ ] Re-enable nightly cron / nightly SharePoint task — OUT OF SCOPE of this run.
-- [ ] Steps 4-6 (prefix-caching verify [note: `enable_prefix_caching=True` confirmed in vLLM V1 startup log], re-measure 19.5K tool-calling cliff, gpt-oss-120b pilot) — not started.
+- [x] **Step 6 — gpt-oss-120b pilot → PRODUCTION CUTOVER (2026-07-10).** Pilot passed; cutover executed on branch `feature/gpt-oss-cutover`. Production `localhost:8000` now serves **gpt-oss-120b MXFP4 via llama.cpp** (unit `vllm.service` name kept, runs `scripts/start_llamacpp.sh`). 4×64K KV pool (non-unified), decode 46.6 tok/s, 3 concurrent @ 25.5 tok/s, all 6 gates passed. Hermes-3 retained as rollback. See [[memory/decisions#D15]], [[SETUP_LOG]], [[GPT_OSS_CUTOVER_PLAN]]. **Pending: human Teams round-trip verifications before merge to master.**
+- [ ] Steps 4-5 (prefix-caching verify [note: `enable_prefix_caching=True` confirmed in vLLM V1 startup log — re-verify under llama.cpp], re-measure tool-calling cliff [retired as prose-fallback, see [[memory/mistakes#M40]]]) — not started.
 
 ---
 

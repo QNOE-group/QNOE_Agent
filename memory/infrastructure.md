@@ -41,7 +41,7 @@ Does NOT persist across reboots. Re-run after each restart. Prompts for ICFO pas
 
 | Service | Status (2026-06-30) | Details |
 |---|---|---|
-| vLLM | systemd `vllm.service` | localhost:8000, Hermes 3 70B AWQ, awq_marlin, 32K context |
+| Inference | systemd `vllm.service` (unit name kept) | localhost:8000, **gpt-oss-120b MXFP4 via llama.cpp** since 2026-07-10 cutover — was Hermes 3 70B AWQ/vLLM. Runs `scripts/start_llamacpp.sh`. |
 | Qdrant | Docker container | port 6333, 8 collections, data at `/opt/qnoe-agent/qdrant_data/` |
 | Watcher | systemd `qnoe-watcher.service` | SMB3 file watcher, ~37K cached files |
 | Hermes Agent | systemd `qnoe-hermes.service` | Native (no Docker), Teams polling, per-user profile routing |
@@ -80,7 +80,21 @@ Does NOT persist across reboots. Re-run after each restart. Prompts for ICFO pas
 - **Concurrent users:** ≥3 guaranteed at full 64K (fp8 pool = ~471K KV tokens; `--max-num-seqs 4`). Decode stays ~6 tok/s regardless (bandwidth-bound; batching amortizes weight streaming up to ~4 streams). Single "who are you" still ~16-20s.
 - **Embedding model memory:** nomic-embed tensors are evicted to swap under memory pressure (e.g. SharePoint digest running). Appears as slow "reload" even though lru_cache holds the object. Fix: dedicated embedding microservice (future work).
 - **vLLM startup (current, fp8/64K, 2026-07-09):** `vllm serve /opt/qnoe-agent/models/hermes-3-70b-awq --host 0.0.0.0 --port 8000 --quantization awq_marlin --max-model-len 65536 --kv-cache-dtype fp8 --max-num-seqs 4 --enable-auto-tool-choice --tool-call-parser hermes` (script `scripts/start_vllm.sh` also redirects stdout→`logs/vllm.log` since the service otherwise only logs to journald). fp8 KV benchmarked ≥ fp16 decode (6.11 vs 5.96 tok/s), tool-calling + quality intact.
-- **To free memory for large ingestion jobs:** `sudo systemctl stop vllm.service` (frees ~115GB). Restart: `sudo systemctl start vllm.service` (~5 min to load).
+- **To free memory for large ingestion jobs:** `sudo systemctl stop vllm.service` (frees ~115GB). Restart: `sudo systemctl start vllm.service` (~1-2 min to load with llama.cpp mmap).
+
+## Serving Stack — gpt-oss-120b via llama.cpp (CUTOVER 2026-07-10)
+
+Production inference switched from **Hermes 3 70B AWQ (vLLM)** to **gpt-oss-120b MXFP4 (llama.cpp)**. The systemd unit name `vllm.service` was intentionally **kept** to preserve the `Requires=vllm.service` chain in `qnoe-hermes.service` and every runbook. Hermes-3 stays on disk as the documented fallback.
+
+- **Server:** `/opt/qnoe-agent/llamacpp/bin/llama-server` (+ co-located `.so` libs; launch script sets `LD_LIBRARY_PATH=/opt/qnoe-agent/llamacpp/bin`).
+- **Model:** `/opt/qnoe-agent/models/gpt-oss-120b-gguf/` — 3 MXFP4 GGUF shards (~63GB). (The separate `models/gpt-oss-120b/` safetensors dir is an earlier vLLM-path artifact, unused by llama.cpp.)
+- **Launch:** `scripts/start_llamacpp.sh` — `-ngl 999 --flash-attn on -ub 2048 -c 262144 --parallel 4 --jinja --chat-template-kwargs '{"reasoning_effort":"low"}' --alias gpt-oss-120b`, stdout→`logs/llamacpp.log`.
+- **KV config decision:** `-c 262144 --parallel 4` **WITHOUT** `--kv-unified` → **4 fixed slots × 65536 (64K) each = 262144-token KV pool**, guaranteeing ≥4 concurrent users at full 64K. `--kv-unified` (community default) was dropped **on purpose**: with it, per-slot ctx is set to the full `-c` then capped to the model's 131072 train context, yielding a *shared* 128K pool (only ~32K/user at 4 concurrent). Non-unified delivers the required 4×64K. Verified in log: `n_slots=4, n_ctx_slot=65536, kv_unified='false'`.
+- **Measured (2026-07-10):** ~63GB weights (mmap) + KV/compute → **44-48GB RAM available while serving** (>> 20GB floor). Decode **46.6 tok/s** single-stream (8× the old Hermes-3 ~6 tok/s), **3 concurrent streams @ 25.5 tok/s each** (~76 tok/s aggregate). TTFT ~0.13s warm (prefix cache), ~3.7s cold on 10K prompt.
+- **`reasoning_effort:low` baked in** at server level via `--chat-template-kwargs` — mitigates gpt-oss's empty-content trait (reasoning eating the output budget). Simple Q with `max_tokens:400` returns non-empty content. NOTE: with **no tools provided**, a "look this up" question can still yield empty content (all tokens go to `reasoning_content` deciding to search) — in production the agent provides tools so this becomes a tool call.
+- **Structured tool calls:** verified at 151 / 8181 / 16210 / 32305 prompt tokens — no cliff (retires the old "19.5K cliff", see [[memory/mistakes#M40]]).
+- **Rollback:** point `vllm.service` `ExecStart=` back to `scripts/start_vllm.sh` (untouched, still the fp8/64K Hermes-3 config), `daemon-reload`, revert the 3 profile configs + `MEM0_LLM_MODEL`, restart. See [[memory/decisions#D14]].
+- **PITFALL hit during cutover:** the systemd service (runs as `qnoe-ai`) crash-looped `status=1` in 2ms because `logs/llamacpp.log` was owned by `yzamir` (from a manual test boot) and `qnoe-ai` could not truncate it for the `>` redirect. Fix: `sudo chown qnoe-ai:qnoe-ai logs/llamacpp.log`. Any file a test boot creates in `logs/` must be chowned back before systemd owns the process.
 
 ## SharePoint Integration
 

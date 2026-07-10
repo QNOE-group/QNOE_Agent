@@ -94,3 +94,14 @@
 **Context:** Hermes 3 70B outputs tool calls as plain text (e.g., `read_file(path="...")`) instead of structured JSON tool_calls. This makes the agent unable to use any tools (file read, RAG search, QCoDeS query). vLLM's `--tool-call-parser hermes` works perfectly with minimal context (359 tokens → structured tool call) but fails at 19.5K tokens.
 **Decision:** Set `agent.tool_use_enforcement: true` in config.yaml (was `auto`).
 **Reasoning:** The `auto` setting only injects tool-use guidance for GPT/Codex/Gemini/Qwen/DeepSeek/Grok — Hermes 3 is not in the list (`TOOL_USE_ENFORCEMENT_MODELS` in `prompt_builder.py:275`). Setting `true` forces the guidance for all models. This is safe — the guidance just tells the model to use tools instead of describing actions.
+
+## D15 — Production cutover to gpt-oss-120b (llama.cpp), superseding Hermes 3 / vLLM
+
+**Date:** 2026-07-10
+**Context:** The gpt-oss-120b pilot passed all gates (decode 48.8 tok/s ≈ 8× Hermes-3, structured tool calls to 32K, no confabulation). User approved cutover + raising context. See [[GPT_OSS_CUTOVER_PLAN]].
+**Decision:** Make **gpt-oss-120b MXFP4 (GGUF) served by llama.cpp** the production model on `localhost:8000`, replacing Hermes 3 70B AWQ / vLLM. Keep the systemd unit name `vllm.service` (preserves the `Requires=` chain + runbooks); `ExecStart` now runs `scripts/start_llamacpp.sh`. Hermes-3 remains on disk (`models/hermes-3-70b-awq`) with `scripts/start_vllm.sh` untouched as the one-line rollback. Supersedes **[[memory/decisions#D1]]** (model choice).
+**KV / concurrency:** `-c 262144 --parallel 4` **without** `--kv-unified` → 4 fixed 64K slots (262144-token pool), ≥4 concurrent users at full 64K. `--kv-unified` was rejected because it caps the pool to the model's 128K train context (shared → only ~32K/user at 4 concurrent). Measured 44-48GB RAM available while serving.
+**Enforcement:** `agent.tool_use_enforcement` set **`false`** in all 3 profiles — [[memory/decisions#D11]] was a Hermes-3-specific hack; gpt-oss emits native structured tool calls (verified 151→32305 prompt tokens, no cliff). If agent-shaped turns show prose-fallback, revert to `true` (documented remedy).
+**`reasoning_effort:low`** baked into the server (`--chat-template-kwargs`) to contain gpt-oss's empty-content trait.
+**Changed in production:** `vllm.service` unit (`ExecStart`+`Description`), new `scripts/start_llamacpp.sh`, 3 profile configs (`model.default: gpt-oss-120b`, `tool_use_enforcement: false`; `context_length` already 65536), `scripts/start_hermes.sh` (`MEM0_LLM_MODEL=gpt-oss-120b`). Deployed on branch `feature/gpt-oss-cutover`.
+**Validation:** all 6 cutover gates passed (health/id, coherence+speed, reasoning budget, tool calls, concurrency, acceptance). Full-agent Teams round-trips remain a human verification.

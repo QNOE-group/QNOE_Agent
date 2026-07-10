@@ -1450,3 +1450,35 @@ Executed [[CONTEXT_EXECUTION_PLAN]] (from [[CONTEXT_PRESSURE_REPORT]] §6). Bran
 - Offline eval, 20 QNOE queries (vLLM stopped to free RAM, restarted after): **token reduction 72%** (1631→454 top-3 tok, PASS), **answer survival 20/20** (PASS), **cpu latency 32.5× cross-encoder** (~22s/query vs 0.67s, **FAIL** ≤2×). Provence 0.4B DeBERTa on the Spark CPU is too slow; also exceeds the RAG prefetch 10s join timeout. Per plan §3.2 AND-gate → STOP, no deploy. `qnoe_rag` unchanged. Full report: `logs/provence_eval.md`.
 
 **Not done (out of scope / gated):** Mem0 deploy, nightly cron re-enable, nightly SP task, steps 4-6. Leftovers on DGX: `/home/yzamir/provence_dl` (1.74GB, safe to delete), unused `nltk` in agent venv.
+
+---
+
+## gpt-oss-120b Production Cutover — 2026-07-10 (branch `feature/gpt-oss-cutover`)
+
+Replaced Hermes 3 70B AWQ (vLLM) with **gpt-oss-120b MXFP4 (llama.cpp)** as the production model on `localhost:8000`. Plan: [[GPT_OSS_CUTOVER_PLAN]]. Decision: [[memory/decisions#D15]]. Downtime window ~16:33–16:57 CEST (~24 min), well clear of the 02:00 cron.
+
+**Staged (non-disruptive):** GGUF (3 shards, ~63GB) → `models/gpt-oss-120b-gguf/`; llama.cpp `bin/` (+libs) → `llamacpp/bin/` (`LD_LIBRARY_PATH` set in launch script); `scripts/start_llamacpp.sh` deployed 755/qnoe-ai.
+
+**Context/KV sizing (measured):** adopted `-c 262144 --parallel 4` **without** `--kv-unified` → 4 fixed slots × 65536 = 262144-token KV pool (log: `n_slots=4, n_ctx_slot=65536, kv_unified='false'`). Deviation from the plan's community `--kv-unified` recommendation: unified caps the pool to the model's 131072 train context (shared → ~32K/user at 4 concurrent), so it does NOT deliver the plan's stated "4 slots × 64K each". Non-unified does. **44–48GB RAM available while serving** (floor 20GB). context_length in profiles already 65536 → unchanged.
+
+**Validation gates (all PASS):**
+| # | Gate | Result |
+|---|---|---|
+| 1 | Health + id | `/health` ok; `/v1/models` = `gpt-oss-120b` |
+| 2 | Coherence + speed | mean decode **46.6 tok/s** (43.3/47.3/49.3), all ≥40; IQHE answer accurate, not garbled |
+| 3 | Reasoning budget | simple Q, `max_tokens:400` → non-empty ("Paris is the capital of France.") |
+| 4 | Tool calls | structured `tool_calls` at 151 / 8181 / 16210 / 32305 prompt tokens — no cliff |
+| 5 | Concurrency | 3 simultaneous 300-tok gens, all complete, **25.5 tok/s each** (~76 aggregate) |
+| 6 | Acceptance | case1 "run 75000 does not exist" ✓; case2 coherent + cites RAG ✓; case3 no invented `.db` (empty content = no-tools harness artifact; reasoning chose to search) |
+
+**Production changes:** `vllm.service` unit (`ExecStart`→`start_llamacpp.sh`, `Description`→llama.cpp/gpt-oss); 3 profile configs (`model.default: gpt-oss-120b`, `tool_use_enforcement: true→false`); `scripts/start_hermes.sh` (`MEM0_LLM_MODEL=gpt-oss-120b`). `daemon-reload`; `vllm.service` started (llama.cpp), healthy; `qnoe-hermes.service` restarted. Both `active`.
+
+**Pitfall hit:** systemd service crash-looped `status=1` in 2ms — `logs/llamacpp.log` was owned by `yzamir` (manual test boot) so `qnoe-ai` couldn't truncate it for the `>` redirect. Fixed with `sudo chown qnoe-ai:qnoe-ai logs/llamacpp.log`. Also hit the M42 self-match trap twice (`pkill -f accept3.py` / earlier pattern in own SSH cmdline).
+
+**Rollback (as-deployed, ~2 min):** `vllm.service` `ExecStart` → `scripts/start_vllm.sh` (untouched fp8/64K Hermes-3), `daemon-reload`; revert 3 profile configs + `MEM0_LLM_MODEL` (git originals); `sudo systemctl restart vllm.service` → `qnoe-hermes.service`.
+
+**Deviations:** (1) dropped `--kv-unified` (justified above). (2) production memory watchdog NOT left running — the M41 Marlin-repack spike is a vLLM-only failure mode; llama.cpp mmap booted cleanly twice with 44–48GB headroom, and a watchdog killing production llama-server on a transient ingestion RAM spike is a worse risk. Watchdog was armed only for the test-boot window.
+
+**Human verifications still needed (Teams round-trips, re-asked against gpt-oss):** 3-profile round-trips, run-75000 "does not exist" through the agent (QCoDeS registry hook), run-159, gate-sweep, band-structure, Mem0 recall + per-user isolation, and a watch for empty-content/prose-fallback (if seen: set `tool_use_enforcement: true` back, and/or raise Hermes `max_tokens` 4096→8192). Hermes verbose init markers (QnoeRag init, Mem0 init, tool_search 7/3) go to the journal (journalctl not in NOPASSWD) — confirm from the journal on next login.
+
+**Not done (out of scope):** Mem0 deploy, nightly cron/SP re-enable, steps 4-5, merge to master (user merges after Teams verifications).
