@@ -18,6 +18,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+import sqlite3
 import threading
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
@@ -42,7 +44,9 @@ RERANK_MODEL_PATH = os.environ.get(
     "RERANK_MODEL_PATH", "/opt/qnoe-agent/models/cross-encoder-msmarco"
 )
 
-TOP_K = 3
+# 3 while the 32K window forced a tight budget; 5 since the 64K upgrade
+# (2026-07-10). Env-overridable for quick experiments.
+TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
 TOP_K_PER_COLLECTION = 20
 RERANK_POOL = 20
 RERANK_THRESHOLD = 0.5
@@ -315,6 +319,76 @@ def _format_facts(facts) -> str:
 
 
 # ---------------------------------------------------------------------------
+# QCoDeS registry hook
+# ---------------------------------------------------------------------------
+# Deterministic: when the user asks about a specific QCoDeS run id, look it up
+# in the registry SQLite directly and inject the authoritative answer —
+# including an explicit "does not exist" — so the model cannot confabulate run
+# details from semantically similar RAG chunks (memory/mistakes.md M38).
+
+QCODES_REGISTRY_DBS = [
+    os.path.join(
+        os.environ.get("AGENT_DATA_DIR", "/home/yzamir/qnoe_server_data"),
+        "episodic.db",
+    ),
+    "/opt/qnoe-agent/memory/episodic.db",
+]
+_RUN_ID_RE = re.compile(r"\brun[\s_#]*(\d{1,7})\b", re.IGNORECASE)
+_QCODES_HINT_RE = re.compile(
+    r"qcodes|measur|dataset|\brun\b", re.IGNORECASE
+)
+
+
+def _qcodes_registry_block(message: str) -> str:
+    if not message or not _QCODES_HINT_RE.search(message):
+        return ""
+    m = _RUN_ID_RE.search(message)
+    if not m:
+        return ""
+    run_id = int(m.group(1))
+    rows: list[tuple] = []
+    searched = False
+    for db in QCODES_REGISTRY_DBS:
+        if not os.path.exists(db):
+            continue
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
+            try:
+                cur = con.execute(
+                    "SELECT db_path, run_id, run_name, sample_name, "
+                    "parameters, completed_timestamp FROM qcodes_registry "
+                    "WHERE run_id=? LIMIT 3",
+                    (run_id,),
+                )
+                rows.extend(cur.fetchall())
+                searched = True
+            finally:
+                con.close()
+        except Exception as exc:
+            logger.warning("QCoDeS registry lookup failed for %s: %s", db, exc)
+    if not searched:
+        return ""
+    header = (
+        "## QCoDeS registry lookup (authoritative — trust this over RAG chunks)\n"
+    )
+    if not rows:
+        return header + (
+            f"No run with run_id {run_id} exists in the QCoDeS registry. "
+            "Tell the user this run does not exist; do NOT invent run details. "
+            "Run ids are per-database — if the user means a specific database, "
+            "ask which one or use the QCoDeS tools (find them via tool_search).\n\n"
+        )
+    lines = [header]
+    for db_path, rid, run_name, sample, params, ts in rows[:5]:
+        lines.append(
+            f"- Run {rid} in {db_path}: name={run_name!r}, sample={sample!r}, "
+            f"completed={ts}, parameters={params}"
+        )
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Tool schemas
 # ---------------------------------------------------------------------------
 
@@ -427,6 +501,14 @@ class QnoeRagProvider(MemoryProvider):
 
         rag_block = f"## RAG Context\n{result}" if result else ""
 
+        # Deterministic QCoDeS registry lookup for run-id questions. Must
+        # never break a turn.
+        qcodes_block = ""
+        try:
+            qcodes_block = _qcodes_registry_block(query)
+        except Exception as e:
+            logger.warning("QCoDeS registry hook failed: %s", e)
+
         # Per-user Mem0 facts, injected ahead of RAG. Must never break a turn.
         mem_block = ""
         if MEM0_ENABLED:
@@ -440,7 +522,7 @@ class QnoeRagProvider(MemoryProvider):
             except Exception as e:
                 logger.warning("Mem0 search failed: %s", e)
 
-        return (mem_block + rag_block) or ""
+        return (mem_block + qcodes_block + rag_block) or ""
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         def _run():
