@@ -328,3 +328,10 @@ Closes roadmap step 5 of [[CONTEXT_PRESSURE_REPORT]]. Numbering note: M39 (unifi
 **Fix (plugin-side, survives Hermes upgrades):** remember `self._last_uid` in `initialize()` (which gets session+user every turn) and fall back to it when `session_id` is empty. Caveat: truly concurrent multi-user turns could briefly attribute a read to the wrong user — read-side only, acceptable; revisit if Hermes core ever passes session_id (candidate upstream one-liner).
 **Lessons:** (1) verify memory recall in a FRESH session, not the session where the fact was stated; (2) per-turn injection logging (mem_facts / qcodes_block / rag_chars / session) is what made this diagnosable in one look — keep it.
 
+
+## M46 — Mem0 memory poisoning: the agent's confabulations became "remembered facts" (2026-07-10)
+
+**Symptom:** after one fabricated superconductivity survey (rag_chars=0 → prior-knowledge answer with false lab attribution), the SAME wrong content came back in the next fresh session — cited as "(Source: persistent memory context)". Injection log: `mem_facts=3 rag_chars=0`; Qdrant scroll found 3 poisoned facts distilled from the bad answer ("The QNOE Superconductivity sub-team studies… hydrides…").
+**Mechanism:** `sync_turn()` fed BOTH user and assistant messages to `mem0.add()` — Mem0 distilled the assistant's claims into user-keyed facts. Confabulate once → remember forever → self-reinforcing.
+**Fixes (all 2026-07-10):** (1) purge poisoned points (Qdrant delete by id); (2) `mem0.add()` now receives the **user message only**; (3) SOUL rule: the memory block is about the USER — never a source for physics/lab facts.
+**Lessons:** (1) any write-back memory over agent output is a confabulation amplifier — store only user-authored content unless outputs are verified; (2) the per-turn injection log (M45's fix) is what made this diagnosable in one look; (3) test memory with a QUESTION THE AGENT PREVIOUSLY ANSWERED WRONGLY — that's the poisoning probe.

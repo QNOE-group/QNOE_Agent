@@ -605,9 +605,14 @@ class QnoeRagProvider(MemoryProvider):
 
         def _write():
             try:
+                # USER message only. Feeding the assistant reply lets the
+                # model's own confabulations become "remembered facts" that
+                # get cited back as truth next session (memory poisoning —
+                # observed live 2026-07-10, mistakes M46: a fabricated
+                # superconductivity survey was distilled into Mem0 and then
+                # cited as "(Source: persistent memory context)").
                 _get_mem0().add(
-                    [{"role": "user", "content": user_content},
-                     {"role": "assistant", "content": assistant_content}],
+                    [{"role": "user", "content": user_content}],
                     user_id=uid,
                 )
             except Exception as e:
