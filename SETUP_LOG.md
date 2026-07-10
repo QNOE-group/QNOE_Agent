@@ -1453,6 +1453,29 @@ Executed [[CONTEXT_EXECUTION_PLAN]] (from [[CONTEXT_PRESSURE_REPORT]] §6). Bran
 
 ---
 
+## gpt-oss-120b pilot (Roadmap Step 6) — 2026-07-10 — VERDICT: FAIL / BLOCKED (hardware memory ceiling); production restored
+
+Executed `GPT_OSS_PILOT_PLAN.md`. Branch `feature/gpt-oss-pilot` off master; isolated worktree.
+
+**Download (DONE):** `openai/gpt-oss-120b` → `/opt/qnoe-agent/models/gpt-oss-120b`, 15 safetensors = **65.2 GB MXFP4** (`GptOssForCausalLM`, quant `mxfp4`, max_pos 131072). Removed the useless `metal/` + `original/` dirs. Owned qnoe-ai:qnoe-ai.
+
+**Stack selection (deviation from plan §1/§2 order):** Used the **existing venv vLLM 0.22.1** (fallback path) as primary, NOT the NVIDIA container. Rationale: this vLLM build already has native `gpt_oss` support — it auto-detects `gpt_oss_mxfp4`, auto-selects the **MARLIN** MXFP4 MoE backend (the exact GB10-safe path the plan wanted, log: `Using 'MARLIN' Mxfp4 MoE backend`), and auto-configures the `openai_gptoss` reasoning parser + harmony tool path (no parser flags needed). It needed no ~15 GB container pull and directly probes the SM121 garble concern. `VLLM_MXFP4_BACKEND` env var is unknown/ignored by this build (harmless). `yzamir` IS in the docker group, so the NVIDIA container (`nvcr.io/nvidia/vllm:26.06-py3`, public/guest-pullable) remains available for a future supervised attempt.
+
+**Hermes-3 baseline (captured live before stopping prod, `/tmp/probe_hermes3.md`):** decode **5.8 tok/s** (450-tok gen, 3×); TTFT ~10K prompt cold **22.8 s** / warm (prefix-cached) 0.45–0.59 s; **tool-calls held structured at 400 / 8.3K / 16.4K / 32.4K** prompt tokens in the bare probe → the documented ~19.5K "cliff" is an agent-integration/prose-fallback effect (M23), not a raw parser limit.
+
+**INCIDENT — gpt-oss never served; box hung twice.**
+- Attempt 1 (`--max-model-len 131072 --max-num-seqs 4`, default util, graphs on): loaded all weights (395 s, disk-bound), then **OOM-killed during CUDA-graph capture** (80 sizes up to batch 1024).
+- Attempt 2 (`--enforce-eager --gpu-memory-utilization 0.78 --max-model-len 131072`): loaded weights, then during KV-pool allocation drove the box to **0 available RAM → full swap → swap-death hang**. `ssh` failed with "Connection timed out during banner exchange" (sshd starved) for ~40–50 min; recovered only when the OOM-killer reaped vLLM. (Confound: the workstation's `Z:` drive dropped mid-incident, briefly making the local shell itself fail — see report.)
+- **Root cause (M39 / D14):** on the 128 GB **unified** box, vLLM's `--gpu-memory-utilization` budgets vs **total device memory**, not free RAM — it does NOT subtract Qdrant (~8 GB) + OS. 60.8 GiB weights + KV pool + those residents overcommit 128 GB. Attempt-2 also launched before attempt-1's memory had reclaimed (`Available RAM: 44 GiB` at load).
+
+**Decision gate:** FAIL — coherence/decode/tool-cliff/acceptance could not be measured because the model never served a token. Benchmark vs Hermes-3 therefore not obtained. **No cutover.** gpt-oss weights kept on disk for a **supervised-only** retry.
+
+**Production restore (DONE & VERIFIED):** killed pilot vLLM, `scripts/start_vllm.sh` untouched (still Hermes-3 AWQ 64K/fp8), `systemctl start vllm.service` + `restart qnoe-hermes.service`; both `active`; endpoint serves `hermes-3-70b-awq`; coherence probe OK.
+
+**Recommendation for a supervised retry (user window):** `--gpu-memory-utilization 0.55 --max-model-len 65536 --enforce-eager --max-num-seqs 2`, launch only when `free -g` available ≥110 GB; or the NVIDIA container. Even so the KV pool is small (~9–16 GB) → limited concurrency; the two-Spark clustering is the real path to a 120B.
+
+**Harness committed** (`benchmark/pilot_probe.py`, `gen_context.py`, `accept_run.py`, `scripts/start_vllm_gptoss.sh`). Acceptance injection contexts were generated (`/tmp/accept_ctx.json`; case1 registry block correctly says run 75000 does not exist) but never run against gpt-oss.
+
 ## gpt-oss-120b Production Cutover — 2026-07-10 (branch `feature/gpt-oss-cutover`)
 
 Replaced Hermes 3 70B AWQ (vLLM) with **gpt-oss-120b MXFP4 (llama.cpp)** as the production model on `localhost:8000`. Plan: [[GPT_OSS_CUTOVER_PLAN]]. Decision: [[memory/decisions#D15]]. Downtime window ~16:33–16:57 CEST (~24 min), well clear of the 02:00 cron.
@@ -1482,3 +1505,19 @@ Replaced Hermes 3 70B AWQ (vLLM) with **gpt-oss-120b MXFP4 (llama.cpp)** as the 
 **Human verifications still needed (Teams round-trips, re-asked against gpt-oss):** 3-profile round-trips, run-75000 "does not exist" through the agent (QCoDeS registry hook), run-159, gate-sweep, band-structure, Mem0 recall + per-user isolation, and a watch for empty-content/prose-fallback (if seen: set `tool_use_enforcement: true` back, and/or raise Hermes `max_tokens` 4096→8192). Hermes verbose init markers (QnoeRag init, Mem0 init, tool_search 7/3) go to the journal (journalctl not in NOPASSWD) — confirm from the journal on next login.
 
 **Not done (out of scope):** Mem0 deploy, nightly cron/SP re-enable, steps 4-5, merge to master (user merges after Teams verifications).
+
+## 2026-07-10 (evening) — Post-cutover Teams verification round + fixes
+
+Live verification of gpt-oss-120b through Teams (user-driven), each failure diagnosed and fixed same-day:
+
+| Test | Result | Fix shipped |
+|---|---|---|
+| run 75000 | ✅ honest "does not exist" (registry hook honored) | — |
+| run 159 | shape ✅, said 35 not 49 → **M44**: `qnoe-ai` couldn't traverse `/home/yzamir` (700) — server registry + qcodes tools were blind to 75,994 lab-server runs | `chmod o+x /home/yzamir` (traverse-only) |
+| band structure | grounded but missed momentum-resolved tunneling (knowledge-scope, not confabulation) | **Domain primers** in QTM+photocurrent SOULs; grounding rules allow *labeled* general-literature knowledge for conceptual Qs ([[memory/decisions#D16]]) |
+| Mem0 recall | fact stored but never recalled → **M45**: Hermes `prefetch_all()` passes no session_id → uid "anon" | plugin falls back to last-initialized user; per-turn injection logging (`prefetch inject: mem_facts=…`); Mem0 extraction max_tokens 512→1536 (gpt-oss reasoning truncated JSON) |
+| gate sweep | returned an IV run from a "Gated" experiment, not a gate sweep | **qcodes_search: `swept_parameter` + `path` filters** (matches the actually-swept axis parsed from run_description), searches BOTH registries, result cards include swept/measured; SOUL rule: always state run name + swept/measured params. True answer: run 848 `gate_sweep_Vg1.4999…_to_-0.3` (2026-05-19, Tip5Sample9) |
+| Mem0 isolation | ✅ (verified morning; colleague re-check still pending) | — |
+
+**Merged to master:** `feature/gpt-oss-cutover` (a2036de), `feature/mem0-per-user` (0fd07ee + follow-ups), session docs + pilot-branch salvage (M39, harness, SETUP_LOG pilot section). Repo == production.
+**Multi-user reality:** Alexander Rothstein began using the agent organically during the round.

@@ -1,6 +1,6 @@
 # Context-Pressure Report — QNOE Lab Agent
 
-*Author: Claude Code · Date: 2026-07-09 · Status: user reviewed 2026-07-09 — steps 1-5 of the roadmap **accepted** (see inline **→ Answer/Decision** blocks). §2.1 open check **resolved by DGX source inspection**: core tools never defer; slimming goes via toolset composition. Steps 1-3 handed off via [[CONTEXT_EXECUTION_PLAN]]. Nothing deployed yet.*
+*Author: Claude Code · Date: 2026-07-09 · Status: user reviewed 2026-07-09 — steps 1-5 of the roadmap **accepted** (see inline **→ Answer/Decision** blocks). §2.1 open check **resolved by DGX source inspection**: core tools never defer; slimming goes via toolset composition. CLOSED 2026-07-10: steps 1-5 executed (Provence rejected on CPU latency; "19.5K cliff" debunked as prose-fallback, see mistakes M40) and step 6 went further than planned — full PRODUCTION CUTOVER to gpt-oss-120b via llama.cpp ([[GPT_OSS_CUTOVER_PLAN]], [[memory/decisions#D15]]) after the vLLM path failed on the Marlin repack double-copy (M39/M41). Final state: 4×64K KV slots, 46.6 tok/s, native tool calls to 32K, ≥4 concurrent users.*
 
 > **Accepted requirement (2026-07-09):** the system must be operational for **≥3 concurrent users** — met by 64K window + fp8 KV + `--max-num-seqs 4` (see §3.2 answer).
 

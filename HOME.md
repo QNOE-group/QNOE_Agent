@@ -1,5 +1,5 @@
 # HOME — Claude Code Memory Index
-*Last updated: 2026-07-08*
+*Last updated: 2026-07-10*
 
 > **Purpose:** Persistent memory for Claude Code working on the QNOE Lab Agent project.
 > Start every session here. Follow links to topic files as needed.
@@ -45,6 +45,7 @@
 | [[PHASE2_BACKLOG]] | Post-MVP features B1–B7 |
 | [[CONTEXT_PRESSURE_REPORT]] | Context-pressure analysis + roadmap (KV math, demand reduction, MoE model swap, 2-Spark scale-out) — user-accepted 2026-07-09 |
 | [[CONTEXT_EXECUTION_PLAN]] | Hand-off plan for roadmap steps 1-3 (vLLM 64K+fp8, toolset slimming, Provence) — executed 2026-07-09/10 |
+| [[GPT_OSS_CUTOVER_PLAN]] | Hand-off plan for the production cutover to gpt-oss-120b via llama.cpp — executed 2026-07-10 |
 | [[GPT_OSS_PILOT_PLAN]] | Hand-off plan for roadmap step 6: pilot gpt-oss-120b as generation model — executing agent launched 2026-07-10 |
 | [[MEM0_INTEGRATION]] | Program to add per-user Mem0 memory inside `qnoe_rag` (see [[memory/decisions#D13]]) |
 | [[REPO_MAPPING]] | Repo → Qdrant collection mapping |
@@ -52,4 +53,5 @@
 
 ## Active Workstream
 
-**Hermes Agent Migration** — M1–M7.5 DONE (full migration + per-user profile routing). Remaining: M8 cleanup, tool calling fix. See [[memory/hermes-migration]].
+**gpt-oss-120b in production (2026-07-10)** — full model cutover done: llama.cpp serves gpt-oss-120b MXFP4 (4×64K slots, 46.6 tok/s, native tool calls). Verification round done, five silent bugs fixed same day (M37, M40-M45). See [[memory/decisions#D15]], [[SETUP_LOG]], [[CONTEXT_PRESSURE_REPORT]].
+Remaining: run-159 re-test (expect 49), colleague Mem0-isolation check, photocurrent round-trip, core-papers ingestion + web-access decision ([[TODO]]).

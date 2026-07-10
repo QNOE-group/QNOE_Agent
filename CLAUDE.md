@@ -56,7 +56,7 @@ A fully local, proactive AI agent system for the QNOE group (ICFO Barcelona, PI:
 
 ```
 ┌──────────────────────────────────────────┐
-│  Hermes 3 70B (INT8 AWQ) via vLLM        │  localhost:8000, 32K context
+│  gpt-oss-120b (MXFP4) via llama.cpp      │  localhost:8000, 4×64K slots
 ├──────────────────────────────────────────┤
 │  LangGraph — orchestrator + 6 sub-agents │  SqliteSaver checkpointer
 ├──────────────────────────────────────────┤
@@ -75,7 +75,7 @@ A fully local, proactive AI agent system for the QNOE group (ICFO Barcelona, PI:
 
 ## Key design decisions (all resolved)
 
-**Inference:** Hermes 3 70B, AWQ INT8, ~70 GB on 128 GB unified DGX memory. vLLM at `localhost:8000`.
+**Inference (since 2026-07-10, D15):** gpt-oss-120b MXFP4 (GGUF) via llama.cpp at `localhost:8000` (unit name still `vllm.service`), 4×64K KV slots, ~47 tok/s, `reasoning_effort:low`. Hermes 3 70B AWQ retained on disk as the 2-minute rollback.
 
 **Memory layers (build in order):**
 - **L1** — Qdrant dense RAG: 7 collections (one per sub-team + group-wide), all embedded with nomic-embed-text-v1.5

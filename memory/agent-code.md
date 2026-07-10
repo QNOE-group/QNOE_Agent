@@ -61,7 +61,7 @@ Dead code moved 2026-07-08 during migration audit:
 
 ### Custom (plugins)
 - `rag_search(query, collection?)` — explicit RAG search
-- `qcodes_search(query?, sample?, experiment?, date_from?, date_to?, limit?)` — measurement registry
+- `qcodes_search(query?, sample?, experiment?, swept_parameter?, path?, date_from?, date_to?, limit?)` — measurement registry. **`swept_parameter` matches the actually-swept axis** (parsed from run_description `depends_on`) — use for "X sweep" questions; `path` filters by DB path (e.g. 'L110 QTM'). Searches BOTH registries (lab-server + SP, [[memory/mistakes#M44]]); result cards include run name + swept/measured params (reporting rule, 2026-07-10)
 - `qcodes_run_details(db_path, run_id)` — swept/measured parameter details
 - `qcodes_run_diff(db_path_a, run_id_a, db_path_b, run_id_b)` — compare two runs
 - `find_file(query, source?, limit?)` — locate a file by name/folder-path across CIFS + SharePoint. Pure local SQLite `LIKE` over ingestion manifests (NO live `find` — a full CIFS scan takes hours; NO Graph call). Backends: CIFS = `index_manifest.file_path` in `/home/yzamir/qnoe_server_data/episodic.db` (server) + `/opt/qnoe-agent/memory/episodic.db` (repos); SP = `sp_manifest.item_path`/`web_url` in `/opt/qnoe-agent/memory/sharepoint.db`. `source ∈ {all,cifs,sharepoint}`. Returns filesystem path (CIFS) or web URL (SP). Covers indexed files only. Configurable via `CIFS_MANIFEST_DBS` (`:`-separated), `SP_MANIFEST_DB`. Deployed + backfilled 2026-07-10.
@@ -87,13 +87,13 @@ Dead code moved 2026-07-08 during migration audit:
 
 ## RAG Plugin (qnoe_rag)
 
-- **File:** `/opt/qnoe-agent/hermes/plugins/qnoe_rag/__init__.py`
-- **TOP_K = 3** (changed from 5 on 2026-07-03; regressed to 5 on 2026-07-08 during BM25 deploy; fixed back to 3 same day — see [[memory/mistakes#M34]])
-- **TOP_K_PER_COLLECTION = 20** — candidates fetched per collection before reranking
-- **RERANK_POOL = 20** — pool size passed to cross-encoder
-- **RERANK_THRESHOLD = 0.5** — minimum score; chunks below this are dropped
-- **Flow (hybrid, 2026-07-06):** embed query (dense + BM25 sparse) → hybrid Qdrant search per collection (RRF fusion of dense + sparse prefetch) → deduplicate → cross-encoder reranks top 20 → return top 3 across ALL collections combined
-- **Savings from TOP_K 5→3:** ~1,200 tokens per turn
+- **File:** `/opt/qnoe-agent/hermes/plugins/qnoe_rag/__init__.py` (also hosts Mem0 + the QCoDeS registry hook)
+- **TOP_K = 5** (env `RAG_TOP_K`; was 3 under the 32K window — raised 2026-07-10 after the 64K upgrade freed budget; history in [[memory/mistakes#M34]])
+- **TOP_K_PER_COLLECTION = 20** · **RERANK_POOL = 20** · **RERANK_THRESHOLD = 0.5** (below-threshold top score ⇒ retrieval declared failed)
+- **Flow (hybrid):** embed query (dense + BM25 sparse) → RRF fusion per collection → **dedup by CONTENT (`text[:200]`, not source+prefix — same doc exists under server path/SP URL/backups; see the 2026-07-10 QTM failure)** → cross-encoder rerank → top 5 combined → anti-lost-in-middle reorder
+- **QCoDeS registry hook (deterministic, 2026-07-10):** message matching a measurement keyword + run id triggers a direct SQLite lookup of BOTH registries, injected as an authoritative block with TOTAL match count (counts double as integrity checks — caught [[memory/mistakes#M44]]); explicit "run N does not exist" kills confabulation ([[memory/mistakes#M38]])
+- **Mem0 (per-user memory, [[memory/decisions#D13]]):** facts injected ahead of RAG (`## What I remember about you`, top-3); writes distilled off-path via `mem0.add()`. **uid fallback to last-initialized user** — Hermes core passes no session_id to prefetch ([[memory/mistakes#M45]]); extraction `max_tokens: 1536` (512 truncated gpt-oss JSON)
+- **Observability:** every turn logs `prefetch inject: mem_facts=N qcodes_block=bool rag_chars=N session=… query=…` — read this FIRST when an answer ignores context
 
 ### BM25 Sparse Vectors (added 2026-07-06)
 
@@ -102,7 +102,7 @@ Dead code moved 2026-07-08 during migration audit:
 - **Storage:** Each Qdrant point has two vectors: unnamed dense (`""`) + named sparse (`"text-sparse"`)
 - **Query:** `Prefetch(dense) + Prefetch(sparse, using="text-sparse")` → `FusionQuery(fusion=Fusion.RRF)` — all in one Qdrant call per collection
 - **Schema:** All 8 collections have `text-sparse` field (added 2026-07-06 via `create_vector_name`)
-- **Backfill:** `agent/indexing/backfill_sparse.py` — resumable, tracks progress in `sparse_backfill` SQLite table. Run once to populate sparse vectors for existing 638K+ points. **NOT YET RUN** as of 2026-07-08.
+- **Backfill:** `agent/indexing/backfill_sparse.py` — resumable, tracks progress in `sparse_backfill` SQLite table. Backfill COMPLETE 2026-07-09 (all 10 collections stamped in `sparse_backfill`).
 - **pip path:** use `pip3` not `pip` in agent venv (`/opt/qnoe-agent/venv/bin/pip3`)
 
 ## Nightly Report (agent/reporting/post_report.py)

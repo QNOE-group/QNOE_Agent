@@ -12,9 +12,24 @@
 - [x] **Step 3 — Provence reranker eval.** Done; **gate FAILED on latency → NOT deployed.** 72% token reduction + 20/20 survival, but 32.5× cpu latency (~22s/query) on the Spark. qnoe_rag stays on cross-encoder. Fallback LLMLingua-2 is a user decision. Eval: `logs/provence_eval.md`.
 - [x] **Mem0 deploy — DONE + LIVE-VERIFIED (2026-07-10).** Deployed via `deploy_mem0.sh`; recall verified end-to-end after the anon-uid fix (mistakes M45); extraction max_tokens 512→1536 for gpt-oss; per-turn injection logging added. Isolation check by a second user still pending.
 - [ ] **I9 — find_file Teams round-trip** (from D14, `qnoe_files` plugin, deployed 2026-07-10 by parallel session) — human verification pending.
-- [ ] Re-enable nightly cron / nightly SharePoint task — OUT OF SCOPE of this run.
+- [x] Re-enable nightly cron / nightly SharePoint task ✅ *(2026-07-09, parallel session — nightly ran 2026-07-10, report delivered)*
 - [x] **Step 6 — gpt-oss-120b pilot → PRODUCTION CUTOVER (2026-07-10).** Pilot passed; cutover executed on branch `feature/gpt-oss-cutover`. Production `localhost:8000` now serves **gpt-oss-120b MXFP4 via llama.cpp** (unit `vllm.service` name kept, runs `scripts/start_llamacpp.sh`). 4×64K KV pool (non-unified), decode 46.6 tok/s, 3 concurrent @ 25.5 tok/s, all 6 gates passed. Hermes-3 retained as rollback. See [[memory/decisions#D15]], [[SETUP_LOG]], [[GPT_OSS_CUTOVER_PLAN]]. **Pending: human Teams round-trip verifications before merge to master.**
-- [ ] Steps 4-5 (prefix-caching verify [note: `enable_prefix_caching=True` confirmed in vLLM V1 startup log — re-verify under llama.cpp], re-measure tool-calling cliff [retired as prose-fallback, see [[memory/mistakes#M40]]]) — not started.
+- [x] Steps 4-5 ✅ *(2026-07-10 — prefix caching verified: 81.5% hit rate under vLLM, warm-TTFT 0.13s under llama.cpp confirms its prompt cache too; "19.5K cliff" resolved as prose-fallback, [[memory/mistakes#M40]])*
+
+---
+
+---
+
+## Open verifications & near-term items (2026-07-10, post-cutover)
+
+- [ ] **Re-ask run 159** through the agent — expect **49** databases (was 35 before the M44 permission fix) with `/ICFO/...` paths in the sample.
+- [ ] **Re-ask the gate-sweep question** — expect run 848 `gate_sweep_Vg1.4999…_to_-0.3` (2026-05-19, Tip5Sample9) via the new `swept_parameter` filter, with run name + swept/measured params stated (reporting rule).
+- [ ] **Colleague Mem0 isolation check** — a second user asks "what do you remember about me?"; must see nothing of Yuval's facts (Alexander is already using the agent).
+- [ ] **Photocurrent + orchestrator profile round-trips** via Teams.
+- [ ] **Core-papers ingestion** ([[memory/decisions#D16]] option 1) — create per-sub-team "core papers" folders (server or SP) and drop flagship PDFs (QTM: Inbar et al. Nature 2023 + follow-ups). Watcher/SP sync ingests automatically. **USER ACTION: choose and drop PDFs.**
+- [ ] **Web-access policy decision (PI-level)** ([[memory/decisions#D16]] option 4) — whether to re-enable `web`/`search` toolsets (queries leave the lab network); relates to [[PHASE2_BACKLOG]] B4.
+- [ ] **Watch for gpt-oss quirks in daily use:** empty-content replies (raise Hermes `max_tokens` 4096→8192) or prose tool-syntax (set `tool_use_enforcement: true` back).
+- [ ] **DGX cleanup (when convenient):** unused vLLM-format weights `models/gpt-oss-120b/` (113 GB), `/home/yzamir/{gpt-oss-120b-gguf,llama.cpp,provence_dl}` copies (~125 GB) — all superseded by `/opt` copies or rejected paths.
 
 ---
 
@@ -129,11 +144,11 @@
 - [x] Schema migrated: `text-sparse` field added to all 8 existing collections via `create_vector_name` ✅ *(2026-07-06)*
 - [x] Hybrid query (dense + BM25 prefetch → RRF fusion) implemented in `hermes/plugins/qnoe_rag/__init__.py` ✅ *(2026-07-06)*
 - [x] `agent/indexing/backfill_sparse.py` written (resumable, SQLite progress tracking) ✅ *(2026-07-06)*
-- [ ] **Run backfill** — 638K+ existing points have no sparse vectors yet. Run AFTER SP ingestion completes. Command: `cd /opt/qnoe-agent && AGENT_DATA_DIR=/opt/qnoe-agent/memory QDRANT_URL=http://localhost:6333 nohup venv/bin/python3 -m agent.indexing.backfill_sparse > logs/backfill_sparse.log 2>&1 &`
-- [ ] **Verify backfill complete** — query `SELECT collection, completed_at FROM sparse_backfill` in `memory/episodic.db`; all rows should have `completed_at` not null
-- [ ] **Run the 3 previously failing exact-term queries** to confirm hybrid search fixes them (device IDs, function names, paper titles)
-- [ ] **Re-enable nightly cron** (disabled 2026-07-08 to avoid interfering with SP ingestion) — `crontab -e`, remove `#DISABLED_TONIGHT ` prefix from 02:00 line. Do after SP ingestion completes.
-- [ ] **Run nightly tasks manually once** (after SP ingestion + cron re-enabled) — repos will re-index once since manifest DB was reset (hashes moved from server DB to repo DB). Command: `PYTHONPATH=/opt/qnoe-agent QDRANT_URL=http://localhost:6333 REPOS_DIR=/opt/qnoe-agent/repos SERVER_DATA_DIR=/home/yzamir/qnoe_server_data SERVER_ROOT=/ICFO/groups/NOE COLLECTIONS_CONFIG=/opt/qnoe-agent/config/repo_collections.yaml /opt/qnoe-agent/venv/bin/python -m agent.indexing.nightly_run`
+- [x] **Run backfill** ✅ *(complete 2026-07-09, all 10 collections)* — Run AFTER SP ingestion completes. Command: `cd /opt/qnoe-agent && AGENT_DATA_DIR=/opt/qnoe-agent/memory QDRANT_URL=http://localhost:6333 nohup venv/bin/python3 -m agent.indexing.backfill_sparse > logs/backfill_sparse.log 2>&1 &`
+- [x] **Verify backfill complete** ✅ *(0 NULL rows, 2026-07-09)* — query `SELECT collection, completed_at FROM sparse_backfill` in `memory/episodic.db`; all rows should have `completed_at` not null
+- [x] **Run the 3 previously failing exact-term queries** ✅ *(2026-07-09 — SpectroMag + scan_specific_dbs verified)* (device IDs, function names, paper titles)
+- [x] **Re-enable nightly cron** ✅ *(2026-07-09)* — `crontab -e`, remove `#DISABLED_TONIGHT ` prefix from 02:00 line. Do after SP ingestion completes.
+- [x] **Run nightly tasks manually once** ✅ *(nightly ran clean 2026-07-10)* — repos will re-index once since manifest DB was reset (hashes moved from server DB to repo DB). Command: `PYTHONPATH=/opt/qnoe-agent QDRANT_URL=http://localhost:6333 REPOS_DIR=/opt/qnoe-agent/repos SERVER_DATA_DIR=/home/yzamir/qnoe_server_data SERVER_ROOT=/ICFO/groups/NOE COLLECTIONS_CONFIG=/opt/qnoe-agent/config/repo_collections.yaml /opt/qnoe-agent/venv/bin/python -m agent.indexing.nightly_run`
 
 ### L3 — SQLite episodic
 - [x] `events` table ✅
@@ -141,14 +156,14 @@
 - [x] ~~Event logger + episodic context query~~ — **superseded by Mem0 (L3.5)**. `log_event` + `get_episodic_context` exist in `agent/episodic.py` but are wired to dead LangGraph code. Hermes handles cross-session recall via Mem0; within-session via rolling window. `audit_log` table still needed for Phase 2 write permissions — see T2–T4 items above.
 
 ### L3.5 — Mem0 user memory *(new)*
-- [ ] `pip install mem0ai`
-- [ ] `episodic_memory` Qdrant collection created
-- [ ] `user_id` keyword index created on collection
-- [ ] Mem0 configured (local Qdrant + vLLM + nomic-embed)
-- [ ] `memory.search()` integrated into turn loop
-- [ ] `memory.add()` integrated into turn loop
-- [ ] Per-user isolation tested
-- [ ] Cross-session recall tested
+- [x] `pip install mem0ai` ✅
+- [x] `episodic_memory` Qdrant collection created ✅
+- [x] `user_id` keyword index created on collection ✅
+- [x] Mem0 configured ✅ *(LLM now gpt-oss-120b; extraction max_tokens 1536)*
+- [x] `memory.search()` integrated (prefetch) ✅ *(uid fallback fix — [[memory/mistakes#M45]])*
+- [x] `memory.add()` integrated (sync_turn, off-path) ✅
+- [x] Per-user isolation tested ✅ *(2026-07-10; colleague re-check under gpt-oss still open — see Open verifications)*
+- [x] Cross-session recall tested ✅ *(2026-07-10, live via Teams after M45 fix)*
 
 ### L4 — Skill registry
 - [ ] Skill format spec + Python loader
@@ -263,7 +278,7 @@
 - [x] **I3 — Agent can't read the server** ✅ *(2026-07-03 — NOT a permissions issue. Both CIFS mounts are readable by qnoe-ai. Root cause: same as "Tool calling as text" — model outputs `read_file(path="...")` as plain text instead of structured tool calls. Fixed by setting `tool_use_enforcement: true`. Needs service restart to take effect.)*
 
 #### Priority: MEDIUM
-- [ ] **I1 — Context compaction too frequent** — IN PROGRESS (2026-07-03). Applied fixes:
+- [x] **I1 — Context compaction too frequent** ✅ *(RESOLVED — superseded by the context-pressure package: 64K window, compaction @ ~48K, floor ~9K; see [[CONTEXT_PRESSURE_REPORT]])*. Original 2026-07-03 fixes:
   - `compression.threshold: 0.75` (all 3 profiles) — compacts at ~24K not ~16K
   - `tool_use_enforcement: true` (all 3 profiles)
   - `tools.tool_search.enabled: 'on'` (all 3 profiles)
@@ -274,7 +289,7 @@
   - **Context breakdown (fresh QTM session):** tool schemas ~6,905 tok · RAG prefetch ~3,600 tok · SOUL.md ~720 tok · Hermes framing ~500 tok · history=0
   - **Tool Slimmer research:** exists ([alias8818/hermes-tool-slimmer](https://github.com/alias8818/hermes-tool-slimmer) v0.6.5), last tested on Hermes v0.15.1 (checked 2026-07-06), no v0.17 support yet. Cannot run alongside native Tool Search — must choose one.
   - **[ ] Weekly check (ongoing):** Re-check Tool Slimmer releases each week until v0.17.x is listed in release notes. When supported: disable native Tool Search, install, verify token savings. Last checked: 2026-07-08 — Hermes Atlas shows max supported version is v0.14.0 (three minor versions behind). Still not usable.
-- [ ] **I2 — Some tools not used (e.g. online search)** — Test which built-in Hermes tools are available and functional. Verify web search, file tools, etc. Identify tools that aren't working and fix or disable.
+- [x] **I2 — Some tools not used (e.g. online search)** ✅ *(RESOLVED 2026-07-10 — toolsets deliberately slimmed to `[file, terminal, clarify, qnoe-lab]`; web/search re-enable is now a PI-level policy decision, [[memory/decisions#D16]])*
 - [x] **I7 — "No home channel is set for Teams_Polling" warning** ✅ *(2026-07-03 — Added `TEAMS_POLLING_HOME_CHANNEL` env var to `start_hermes.sh` with Yuval's DM chat ID. Source: `gateway/run.py:9307` checks `_home_target_env_var()` → `TEAMS_POLLING_HOME_CHANNEL`. Needs service restart to take effect.)*
 - [x] **Tool calling as text** ✅ *(2026-07-03 — Root cause: `TOOL_USE_ENFORCEMENT_MODELS` in `prompt_builder.py:275` only includes GPT/Codex/Gemini/Qwen/etc — not Hermes 3. With `tool_use_enforcement: auto`, the enforcement guidance was never injected. Fixed: set `tool_use_enforcement: true` in config.yaml. Also compounds with I1 context bloat — at 19.5K tokens the model degrades further. Needs service restart to take effect.)*
 
@@ -289,7 +304,7 @@
 
 ---
 
-## 4. Benchmark — Full Stack Re-run
+## 4. Benchmark — Full Stack Re-run *(stale: written for Hermes-3; the cutover acceptance suite (SETUP_LOG 2026-07-10) largely supersedes it — re-run under gpt-oss only if a fresh baseline is wanted)*
 
 Re-run `benchmark/run_benchmark.py` after the full stack is operational. The baseline benchmark (2026-06-08) was run with no system prompt, no RAG, and no tools — score was 3.53/5 (marginal pass). Results in `benchmark/benchmark_scores.md`.
 

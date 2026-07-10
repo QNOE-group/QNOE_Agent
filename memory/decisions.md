@@ -130,3 +130,13 @@
 **`reasoning_effort:low`** baked into the server (`--chat-template-kwargs`) to contain gpt-oss's empty-content trait.
 **Changed in production:** `vllm.service` unit (`ExecStart`+`Description`), new `scripts/start_llamacpp.sh`, 3 profile configs (`model.default: gpt-oss-120b`, `tool_use_enforcement: false`; `context_length` already 65536), `scripts/start_hermes.sh` (`MEM0_LLM_MODEL=gpt-oss-120b`). Deployed on branch `feature/gpt-oss-cutover`.
 **Validation:** all 6 cutover gates passed (health/id, coherence+speed, reasoning budget, tool calls, concurrency, acceptance). Full-agent Teams round-trips remain a human verification.
+
+## D16 — Knowledge beyond the local corpus: domain primers + labeled general knowledge
+
+**Date:** 2026-07-10
+**Context:** gpt-oss's QTM band-structure answer was fully grounded but missed momentum-resolved tunneling — the lab's flagship concept. Not confabulation: a knowledge-scope gap. The concept exists locally only as one thesis-proposal sentence (retrieval-luck dependent), and the post-M38 grounding rules had deliberately muzzled the model's own (correct) literature knowledge.
+**Decision (options 2+3 of 4; user-approved):**
+- **Domain primers in SOUL.md** (QTM: momentum-conserving tunneling through the twistable moiré junction → direct E(k) mapping, Inbar et al. Nature 2023; photocurrent: PTE vs PV, gate-dependence). ~150 tokens each, always in context, immune to retrieval luck.
+- **Grounding rules refined:** conceptual/textbook questions MAY use general-literature knowledge **labeled as such**; lab-specific facts (runs, files, parameters, devices, dates) remain retrieval-only — never guessed.
+**Deferred to [[TODO]] (options 1+4):** per-team core-papers ingestion folders (user drops PDFs, watcher ingests — fits no-data-leaves-lab); web-access toolset re-enable (PI-level policy — queries leave the network; relates to [[PHASE2_BACKLOG]] B4).
+**Related:** QCoDeS reporting rule (same day): every measurement answer must state run NAME + swept/measured parameters — enforced in SOUL + registry hook + tool output shape.
