@@ -397,7 +397,9 @@ def _qcodes_registry_block(message: str) -> str:
         f"Showing {len(shown)} of {total} — tell the user the TOTAL count and "
         "that the list below is a sample; offer to narrow by project or "
         "database. Do not present this sample as the complete list, and do "
-        "not add databases from RAG chunks.",
+        "not add databases from RAG chunks. When reporting any run, ALWAYS "
+        "state its run name and its recorded parameters explicitly in your "
+        "reply — never refer the user to 'the parameters field'.",
     ]
     for db_path, rid, run_name, sample, params, ts in shown:
         lines.append(
