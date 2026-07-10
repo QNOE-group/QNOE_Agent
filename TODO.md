@@ -1,5 +1,5 @@
 # QNOE Lab Agent — Master TODO
-*Last updated: 2026-07-08 — Mem0 per-user memory built + staged (pending vLLM window); BM25 deployed, orphan cleanup fixed, nightly cron disabled tonight*
+*Last updated: 2026-07-09 — BM25 backfill complete; repo change queue processed (parallel 6-worker runner); nightly cron re-enabled; SP nightly task re-enabled; vLLM restarted; watcher path exclusions added (PyInstaller/venv/ipynb_checkpoints); Mem0 deploy pending*
 
 > Claude Code memory: [[HOME]] · Migration tracker: [[memory/hermes-migration]] · Decisions: [[memory/decisions]]
 
@@ -43,6 +43,20 @@
 **Still untested (needs vLLM):** `add(infer=True)` LLM distillation; live in-agent behavior.
 
 - [ ] **Deploy Mem0 per-user memory** — run `deploy_mem0.sh` + steps above once vLLM window is available
+
+---
+
+## ⏳ ACCEPTED — Context-pressure package (2026-07-09)
+
+**Status:** Roadmap steps 1-5 of [[CONTEXT_PRESSURE_REPORT]] accepted by user (see inline **→ Answer/Decision** blocks). Requirement: **≥3 concurrent users**. §2.1 open check RESOLVED 2026-07-09 (core tools never defer — slimming via toolset composition). **Steps 1-3 handed off to an executing agent: [[CONTEXT_EXECUTION_PLAN]].** vLLM is currently STOPPED; BM25 backfill COMPLETE (2026-07-09 ~12:04 UTC) — no blocker for the restart.
+
+- [ ] **1. vLLM flags** (per [[CONTEXT_EXECUTION_PLAN]] §1): `--max-model-len 65536 --kv-cache-dtype fp8 --max-num-seqs 4` in `scripts/start_vllm.sh`; benchmark fp8 vs fp16, keep winner; `context_length: 65536` in all 3 Hermes profiles.
+- [ ] **2. Tool-schema slimming** (per plan §2): `toolsets: [file, terminal, clarify, qnoe-lab]` replacing `hermes-cli` in all 3 profiles (~6.4K → ~3.7K tok). NOT via Tool Search — core tools never defer (verified in v0.17.0 source; Tool Search is currently a no-op for our profiles).
+- [ ] **3. Provence reranker swap** (per plan §3): download `naver/provence-reranker-debertav3-v1`, 20-query eval gate vs cross-encoder, integrate behind `RAG_RERANKER` env flag.
+- [x] **4. Prefix caching: VERIFIED (2026-07-10).** `enable_prefix_caching=True` (V1 startup log); live metrics show **81.5% prefix cache hit rate**; injection point confirmed in Hermes source (`conversation_loop.py`): RAG/Mem0 block is appended to the current turn's *user message* (end of prompt), so the SOUL+tools+history prefix stays cacheable. No change needed.
+- [ ] **5. Re-measure the ~19.5K tool-calling cliff** after 1-2 land (it may move when tool schemas shrink); update [[memory/decisions#D11]] notes.
+- [ ] **6. gpt-oss-120b pilot — IN PROGRESS (2026-07-10, user-approved after repeated Hermes-3 confabulations).** Handed off to an executing agent: [[GPT_OSS_PILOT_PLAN]]. Acceptance gate incl. the three 2026-07-10 confabulation cases (run 75000, QTM band structure, invented .db).
+- [ ] **Update memory notes** ([[memory/infrastructure]] + MEMORY.md) with the multi-user KV table from report §3.2 answer once deployed.
 
 ---
 
@@ -157,11 +171,11 @@
 - [x] Schema migrated: `text-sparse` field added to all 8 existing collections via `create_vector_name` ✅ *(2026-07-06)*
 - [x] Hybrid query (dense + BM25 prefetch → RRF fusion) implemented in `hermes/plugins/qnoe_rag/__init__.py` ✅ *(2026-07-06)*
 - [x] `agent/indexing/backfill_sparse.py` written (resumable, SQLite progress tracking) ✅ *(2026-07-06)*
-- [ ] **Run backfill** — 638K+ existing points have no sparse vectors yet. Run AFTER SP ingestion completes. Command: `cd /opt/qnoe-agent && AGENT_DATA_DIR=/opt/qnoe-agent/memory QDRANT_URL=http://localhost:6333 nohup venv/bin/python3 -m agent.indexing.backfill_sparse > logs/backfill_sparse.log 2>&1 &`
-- [ ] **Verify backfill complete** — query `SELECT collection, completed_at FROM sparse_backfill` in `memory/episodic.db`; all rows should have `completed_at` not null
-- [ ] **Run the 3 previously failing exact-term queries** to confirm hybrid search fixes them (device IDs, function names, paper titles)
-- [ ] **Re-enable nightly cron** (disabled 2026-07-08 to avoid interfering with SP ingestion) — `crontab -e`, remove `#DISABLED_TONIGHT ` prefix from 02:00 line. Do after SP ingestion completes.
-- [ ] **Run nightly tasks manually once** (after SP ingestion + cron re-enabled) — repos will re-index once since manifest DB was reset (hashes moved from server DB to repo DB). Command: `PYTHONPATH=/opt/qnoe-agent QDRANT_URL=http://localhost:6333 REPOS_DIR=/opt/qnoe-agent/repos SERVER_DATA_DIR=/home/yzamir/qnoe_server_data SERVER_ROOT=/ICFO/groups/NOE COLLECTIONS_CONFIG=/opt/qnoe-agent/config/repo_collections.yaml /opt/qnoe-agent/venv/bin/python -m agent.indexing.nightly_run`
+- [x] **Run backfill** ✅ *(2026-07-09 — All 10 collections done: group-wide 634,518 pts, qcodes-runs 97,009 pts, qed 19,472 pts, photocurrent 10,236 pts, qsim 5,498 pts, qtm 505 pts, superconductivity 461 pts, xchiral/episodic_memory/mem0migrations 0 pts. Bugs fixed: empty sparse vector filter + batch size 200→50.)*
+- [x] **Verify backfill complete** ✅ *(all collections show completed_at in sparse_backfill table)*
+- [x] **Run the 3 previously failing exact-term queries** ✅ *(2026-07-09 — BM25 verified: "SpectroMag" returns SpectroMag manual; "scan_specific_dbs" returns database content; hybrid RRF fusion working)*
+- [x] **Re-enable nightly cron** ✅ *(2026-07-09 — removed `#DISABLED_TONIGHT ` prefix)*
+- [x] **Run nightly tasks manually once** ✅ *(2026-07-09 — ran; task_process_change_queue timed out at 1h (expected backlog); ran separately as parallel 6-worker job, completed 2026-07-09 17:25)*
 
 ### L3 — SQLite episodic
 - [x] `events` table ✅
@@ -310,9 +324,12 @@
 #### Priority: NEW FEATURES
 - [ ] **I8 — Channel @mention support** — Ask IT to add `ChannelMessage.Read.All` to app `108a03c5` (in addition to `ChannelMessage.Send` already requested). Enables bot to respond to @mentions in Teams channels. Requires polling channel messages in `teams_polling` plugin. Defer until after `ChannelMessage.Send` is granted and channel reporting is live.
 - [~] **I4 — SharePoint access + embedding** — LIVE (2026-07-03). Two sites indexed: `twisted-materials` (QTOM, SpectroMag, THz gas laser) + `noe-group` (all). Delta sync every 30 min via `SharePointPoller`. Nightly full sync as safety net. ONGOING: monitor delta sync health, verify nightly runs, expand site/folder coverage as needed.
-  - [ ] **Verify current full sync run completed** (started 2026-07-08) — check log, confirm `processed` count, no auth errors, points land in `group-wide` collection with `text-sparse` vectors (new points should have sparse since ingestion code was updated)
-  - [ ] **After sync + backfill both done:** spot-check a SharePoint-sourced point in Qdrant to confirm it has both dense and `text-sparse` vectors: `GET /collections/group-wide/points/{id}`
-  - [ ] **Run `ingest_sp_qcodes.py`** (one-time) after full SP sync completes — ingests QCoDeS `.db` files from SharePoint into `qcodes-runs`. See `memory/agent-code.md` for run command. Do NOT re-run after completion.
+  - [x] **Full sync completed** ✅ *(2026-07-09 — 953 indexed, 76,621 skipped, 0 errors. Key fixes shipped during this run: JSONL streaming cache (no OOM), memory-aware submission guard (psutil, 20 GB floor), Docling worker kill-on-timeout fix, `--keep-cache` flag. Commits: 31b2208, 82d4798, 308c288, 0267c19)*
+  - [x] **Spot-check SharePoint point in Qdrant** ✅ *(2026-07-09 — point ID 000020f6-c3a1-4cf5-9041-de71f5eceaa5, repo=noe-group, text-sparse present with 68 nnz)*
+  - [x] **SP nightly task re-enabled** ✅ *(2026-07-09 — `task_sync_sharepoint` uncommented in `nightly_run.py`, deployed to DGX)*
+  - [x] **`ingest_sp_qcodes.py`** ✅ *(2026-07-09 — 248 DBs, 11,905 new runs ingested into `qcodes-runs`. Rewrote to stream from JSONL cache instead of loading all items; added memory guard + `_SharedToken` refresh.)*
+- [~] **I9 — `find_file` unified CIFS + SharePoint file search** — DEPLOYED (2026-07-10). New `qnoe_files` plugin exposes `find_file(query, source?, limit?)` — local SQLite `LIKE` over ingestion manifests (CIFS `index_manifest` + SP `sp_manifest`). Added `web_url` column to `sp_manifest` (written on every sync going forward) and backfilled all 22,102 existing rows from Qdrant payloads via `agent/indexing/backfill_sp_weburl.py`; wired that backfill into nightly `task_sync_sharepoint` as a safety net. Handler tested against live DBs (all 3 source modes OK); agent restarted clean (NRestarts=0).
+  - [ ] **HUMAN TEST — Teams round-trip** *(couldn't be done by Claude — can't send Teams msgs; agent runtime logs are journald-only)*: DM the bot e.g. *"find the AMC300 manual"* (expect a SharePoint web link) and a CIFS-file query (expect a filesystem path). Confirms the LLM actually **invokes** `find_file` end-to-end, not just that the handler works.
 - [x] **Nightly report → Teams channel** ✅ *(2026-07-08 — `agent/reporting/post_report.py` wired into nightly_run.py; posts to "Agent Logs" channel in QNOE-Agent team. Supports channel (REPORT_TEAM_ID + REPORT_CHANNEL_ID) with DM fallback. Switched from DM to channel 2026-07-08.)*
 - [x] **I6 — QCoDeS run details & diff tools** ✅ *(2026-07-06)* — Added `qcodes_run_details` and `qcodes_run_diff` to `qnoe_qcodes` plugin. Both parse `description_json` in Python (not LLM) to extract swept/measured params with labels+units. Diff shows only_in_a / only_in_b / in_both for swept and measured separately. No CIFS access needed — queries `qcodes_registry` only. Deployed to `/opt/qnoe-agent/hermes/plugins/qnoe_qcodes/__init__.py`. Smoke tested against real registry (75,994 runs). **Needs service restart to activate.**
 

@@ -235,6 +235,18 @@ def task_sync_sharepoint() -> None:
         site_stats = delta_sync(site, cfg, token)
         all_stats[site["name"]] = site_stats
         logger.info("SP nightly done for %s: %s", site["name"], site_stats)
+
+    # Safety net for the find_file tool: delta_sync writes web_url only for
+    # changed files, so backfill any manifest rows still missing it (from a
+    # crash, re-index, or the pre-web_url era). Cheap — only scans NULL rows.
+    try:
+        from agent.indexing.backfill_sp_weburl import backfill
+        bf_stats = backfill()
+        all_stats["web_url_backfill"] = bf_stats
+        logger.info("SP web_url backfill (nightly): %s", bf_stats)
+    except Exception as exc:
+        logger.warning("SP web_url backfill skipped: %s", exc)
+
     return all_stats
 
 

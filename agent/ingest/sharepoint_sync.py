@@ -221,9 +221,17 @@ def _get_sp_manifest_conn() -> sqlite3.Connection:
             etag         TEXT NOT NULL,
             collection   TEXT NOT NULL,
             point_ids    TEXT NOT NULL,
+            web_url      TEXT,
             indexed_at   TEXT NOT NULL
         )
     """)
+    # Migration: add web_url to manifests created before the find_file tool.
+    # (CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so the
+    # column must be added explicitly. Backfill existing rows separately via
+    # agent.indexing.backfill_sp_weburl.)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sp_manifest)")}
+    if "web_url" not in cols:
+        conn.execute("ALTER TABLE sp_manifest ADD COLUMN web_url TEXT")
     conn.commit()
     return conn
 
@@ -244,13 +252,15 @@ def _record_item(
     etag: str,
     collection: str,
     point_ids: list[str],
+    web_url: str = "",
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     sp_conn.execute(
         """INSERT OR REPLACE INTO sp_manifest
-           (item_id, item_path, site_name, drive_id, etag, collection, point_ids, indexed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (item_id, item_path, site_name, drive_id, etag, collection, json.dumps(point_ids), now),
+           (item_id, item_path, site_name, drive_id, etag, collection, point_ids, web_url, indexed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (item_id, item_path, site_name, drive_id, etag, collection,
+         json.dumps(point_ids), web_url, now),
     )
     sp_conn.commit()
 
@@ -429,7 +439,7 @@ def _process_item(
         point_ids = _upsert_chunks(client, collection, chunks, vectors, sparse_vecs)
         _record_item(
             sp_conn, item_id, rel_path, site_cfg["name"],
-            drive_id, etag, collection, point_ids,
+            drive_id, etag, collection, point_ids, web_url,
         )
         logger.info("SP indexed: %s → %d chunks", rel_path, len(chunks))
         return True

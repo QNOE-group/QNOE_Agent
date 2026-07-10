@@ -1,5 +1,5 @@
 # Ingestion & RAG Pipeline
-*Last updated: 2026-07-03 (SharePoint pipeline added)*
+*Last updated: 2026-07-10 (sp_manifest web_url + backfill for find_file)*
 
 > File discovery, chunking, embedding, Qdrant indexing, watcher daemon, QCoDeS scanner.
 > Watcher design: [[WATCHER_PLAN]] · Repo mapping: [[REPO_MAPPING]] · Memory design: [[INFERENCE_MEMORY]]
@@ -23,7 +23,12 @@ Docling used for PDF/DOCX/PPTX (50MB cap). Oversized files logged to `/tmp/overs
 `agent/ingest/excluded.py` reads `config/watcher.yaml` → `find_prune_args()`.
 All `find` commands (run_ingest, qcodes_scanner) use this function.
 
-Excluded folders: QDphotodetector, TopoNanop, HighQuality_Plamons, Low_temperature_polaritons, mid-IR_Plasmonic_detector_Seb, Graphene Optomechanics.
+Excluded folders: QDphotodetector, TopoNanop, HighQuality_Plamons, Low_temperature_polaritons, mid-IR_Plasmonic_detector_Seb, Graphene Optomechanics, `Personal/Sergi/QTM - Copy` (bundled Python env).
+
+**Path substring exclusions** (`exclude_path_substrings` in watcher.yaml, applied via `find ! -path` in `_targeted_find`):
+`/PyInstaller/`, `/_pyinstaller/`, `/venv/`, `/.venv/`, `/site-packages/`, `/node_modules/`, `/__pycache__/`, `/.ipynb_checkpoints/`
+
+**Parallel change queue runner** (`/tmp/parallel_queue.py`): 6-worker ProcessPoolExecutor, runtime path filter matching same exclusions, `mark_processed` called after all workers complete. Use when change queue has large backlog (e.g. after manifest DB reset). Command: `cd /opt/qnoe-agent && N_WORKERS=6 setsid bash -c 'nohup venv/bin/python /tmp/parallel_queue.py >> logs/parallel_queue.log 2>&1' > /dev/null &`
 
 ## Qdrant Collections
 
@@ -68,6 +73,10 @@ Files: `agent/ingest/sharepoint_client.py` (Graph API wrapper), `agent/ingest/sh
 **First run timing:** Full listing of 2429-item drive takes ~2.5 min. Docling PDFs 30s–3min each. NOE-Group is larger — expect 2–4h total first sync.
 
 **Orphan cleanup:** `sweep_orphans()` in `run_ingest.py` only covers `index_manifest`. SP chunks tracked via `sp_manifest` — no orphan sweep yet (future work).
+
+**`web_url` column (2026-07-10, for `find_file` tool):** `sp_manifest` now stores the SharePoint web link. `_record_item()` writes it on every delta/full sync (auto-migrates via `PRAGMA`/`ALTER` in `_get_sp_manifest_conn`). Existing 22,102 rows backfilled from Qdrant chunk payloads (`source` field) by `agent/indexing/backfill_sp_weburl.py` — idempotent, only touches `web_url IS NULL/''`, batched `client.retrieve` per collection. Wired into nightly `task_sync_sharepoint` as a safety net (runs AFTER the sites loop → skipped if SP auth fails that night; the one-time backfill already made the manifest 100% complete).
+
+**Known pre-existing issue (noticed 2026-07-10):** nightly `task_sync_sharepoint` logged `Missing credentials: SHAREPOINT_USERNAME/PASSWORD` on the 02:01 run — the secrets `setdefault` load isn't reliably populating the cron env. Unrelated to `find_file`; flag for separate fix.
 
 ## Nightly Tasks
 
