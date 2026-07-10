@@ -269,3 +269,10 @@ platform_toolsets:
 
 **Symptom:** Asked "what parameters were recorded in QCoDeS run 75000?", the agent gave a detailed, plausible answer (experiment name, sample, params, timestamp). **Run 75000 does not exist** — max `run_id` in the registry is 59,477. No QCoDeS tool call was made; the model stitched details from semantically-similar RAG chunks.
 **Lesson:** existence questions can't be answered from similarity search. For run-id lookups the agent must call the QCoDeS tools (via the tool_search bridge) and report "not found" honestly. Candidate fix: SOUL instruction + re-test (open item).
+
+## M43 — systemd service crash-loops in 2ms because its log file is owned by the wrong user (2026-07-10)
+
+**Symptom:** during the gpt-oss cutover, `vllm.service` (which now runs `start_llamacpp.sh` as `qnoe-ai`) showed `activating (auto-restart)`, `status=1/FAILURE`, `CPU: 2ms` — dying instantly, before loading any model. `/v1/models` returned nothing, no `llama-server` process. The log file `logs/llamacpp.log` still showed a **stale** boot (frozen, not truncated).
+**Cause:** the launch script redirects stdout with `> /opt/qnoe-agent/logs/llamacpp.log`. That file had been created by a **manual test boot run as `yzamir`** (owner `yzamir:Domain Users`, mode 644). When systemd ran the script as `qnoe-ai`, the shell could not open the file for writing (truncate) → script exits 1 before the `exec` → restart loop. The 2ms CPU + un-truncated stale log are the tell.
+**Fix:** `sudo chown qnoe-ai:qnoe-ai /opt/qnoe-agent/logs/llamacpp.log` (or delete it so the service creates it fresh), then `sudo systemctl restart`.
+**Lesson:** any file a manual test boot writes into a service-owned dir (esp. the redirect target log) must be chowned back to the service user before systemd takes over — a service-user process cannot truncate a file owned by another user even in a group-writable dir if the file itself isn't group-writable. When a service dies with ~2ms CPU and a frozen log, suspect the log redirect, not the model.

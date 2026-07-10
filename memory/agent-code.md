@@ -68,9 +68,13 @@ Dead code moved 2026-07-08 during migration audit:
 - **Old LangGraph:** Code-enforced `ALLOWED_ROOTS` in `tools.py` (hard boundary)
 - **Hermes:** SOUL.md instruction-level only (soft boundary). All profiles include explicit "Do NOT access paths outside `/ICFO/groups/NOE/` and `/opt/qnoe-agent/repos/`" instructions. No code enforcement.
 
-## vLLM Model ID
+## Model ID (served on localhost:8000)
 
-Must use full path: `/opt/qnoe-agent/models/hermes-3-70b-awq`
+**Current (2026-07-10 cutover):** `gpt-oss-120b` — the llama.cpp `--alias`. All 3 profile configs set `model.default: gpt-oss-120b`; `MEM0_LLM_MODEL=gpt-oss-120b` in `scripts/start_hermes.sh`. Served by llama.cpp, see [[memory/infrastructure#Serving Stack — gpt-oss-120b via llama.cpp]] and [[memory/decisions#D15]].
+
+**`tool_use_enforcement`:** set **`false`** in all 3 profiles at cutover (was `true` for Hermes-3, see [[memory/decisions#D11]]). gpt-oss emits native structured tool calls, so the Hermes enforcement guidance is not needed. If agent-shaped turns show prose-fallback (tool syntax in reply text), revert the flag to `true` and restart — documented remedy.
+
+**Fallback (Hermes-3, rollback):** full path `/opt/qnoe-agent/models/hermes-3-70b-awq` (vLLM's id was the model path, not an alias). Restored by pointing `vllm.service` back to `scripts/start_vllm.sh`.
 
 ## Embedding
 

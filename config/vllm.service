@@ -1,11 +1,11 @@
 [Unit]
-Description=vLLM Inference Server (Hermes 3 70B AWQ)
+Description=llama.cpp Inference Server (gpt-oss-120b MXFP4)
 After=network.target
 
 [Service]
 User=qnoe-ai
 Environment=PATH=/opt/qnoe-agent/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/opt/qnoe-agent/scripts/start_vllm.sh
+ExecStart=/opt/qnoe-agent/scripts/start_llamacpp.sh
 Restart=on-failure
 RestartSec=30
 TimeoutStartSec=600
