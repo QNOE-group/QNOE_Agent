@@ -1012,6 +1012,13 @@ short and keeps the RAG scope tight for evaluation.
 
 ### 9.4 Acceptance criteria
 
+> **Rescoped 2026-07-10 (user decision):** MVP-1 = the *interactive read-only assistant* — criteria 1-4 and 7-9.
+> Criteria **5, 6, 10** (proactive triggers + cross-team fan-out) were never implemented and are deferred to
+> Phase 2 as [[PHASE2_BACKLOG]] **B8 / B9 / B10**. Status at rescope: #2, #4, #9 verified live (see
+> [[SETUP_LOG]] 2026-07-10 verification round — on gpt-oss-120b, exceeding this spec: per-user Mem0 memory,
+> deterministic QCoDeS registry grounding, 4×64K multi-user serving); #1, #3, #7, #8 pending the
+> [[MVP_VERIFICATION_PLAN]] tests.
+
 The MVP is considered working when all of the following pass:
 
 | # | Test | Pass condition |

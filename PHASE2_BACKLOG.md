@@ -740,3 +740,28 @@ The `/local` override is always available and always honoured immediately.
 
 ---
 
+## B8 — Failing-notebook trigger (deferred MVP criterion #5, 2026-07-10)
+
+Proactive detection of error outputs in notebooks: watcher/nightly sweep scans `.ipynb` cell outputs for
+tracebacks in QTM + photocurrent repos; on a new failure, DM the repo owner (owner map: `config/maintainer.yaml`).
+**Status:** never implemented — `config/triggers.yaml` does not exist and there is no trigger code; deferred out of
+MVP-1 by user decision 2026-07-10 (see [[AGENT_FRAMEWORK]] §9.4 rescope note). Design source: [[AGENT_FRAMEWORK]] §7.
+**Build notes:** the nightly pipeline + Teams channel/DM reporting infra ([[memory/agent-code#Nightly Report]])
+already exist — implementation is a scanner + dedup state table + a `post_report.py`-style DM call.
+
+## B9 — New-paper channel summaries (deferred MVP criterion #6, 2026-07-10)
+
+When the nightly ingest indexes a new PDF in the literature store, post an LLM summary to the relevant sub-team
+channel next morning. **Status:** ingestion + nightly report exist; per-paper summaries were never implemented;
+deferred out of MVP-1 (2026-07-10). **Build notes:** hook into the nightly manifest diff (new `.pdf` rows),
+summarise with the production model (gpt-oss-120b — cheap now at ~47 tok/s), reuse the channel-posting path from
+`agent/reporting/post_report.py`. Needs `ChannelMessage.Send` on the right channels (see TODO I8 for permissions).
+
+## B10 — Cross-team synthesis via orchestrator fan-out (deferred MVP criterion #10, 2026-07-10)
+
+Orchestrator queries multiple sub-agents in parallel for cross-team questions and synthesises the answers.
+**Status:** designed for LangGraph ([[AGENT_FRAMEWORK]] §5); under Hermes, routing is per-user and the `delegation`
+toolset is deliberately disabled — no fan-out path exists. Deferred out of MVP-1 (2026-07-10).
+**Build notes:** candidates are (a) re-enable Hermes delegation for the orchestrator profile only, or (b) a
+`qnoe_synthesis` plugin tool that calls the other profiles' collections directly through `qnoe_rag` (cheaper: RAG
+fan-out without a second agent). Decide when a real cross-team use case appears.
