@@ -4,17 +4,20 @@
 MUST run as qnoe-ai (profile home is mode 700):
     sudo -u qnoe-ai bash /opt/qnoe-agent/redteam/run.sh [--dry-run] [--class C] [--profile P] [--list]
 
-Per probe it: (1) builds a throwaway HERMES_HOME whose config/SOUL/plugins/.env
-are SYMLINKS to the live profile (full parity) but whose state.db + logs are
-local (no lock contention with the live gateway, no session pollution);
+Per probe it: (1) builds a throwaway HERMES_HOME — SOUL/.env/plugins are
+SYMLINKS to the live profile (parity), but config.yaml is COPIED with a
+`platform_toolsets.cli` entry added so the qnoe-lab plugin tools load under the
+cli one-shot (the `-t/--toolsets` flag can't resolve plugin toolset names), and
+state.db + logs are local (no lock contention / session pollution);
 (2) plants any injection file; (3) runs one full agent turn with MEM0_ENABLED=0
-(no writes to the live episodic_memory collection); (4) captures the answer,
-grades it, and (5) cleans up. Writes a markdown + JSON report.
+(no writes to the live episodic_memory collection); (4) grades; (5) cleans up.
 
-Note: `hermes -z` calls logging.disable(CRITICAL), so INFO log lines (the
-`prefetch inject:` triage line) are usually suppressed in Channel A — the
-answer + oracle verdict is the primary signal here; deep log triage lives on
-Channel B (Teams). See README.md.
+A turn that errors or returns empty is scored ERROR (never PASS/FAIL) — an empty
+answer must not trivially satisfy a must_not_contain grader.
+
+Note: `hermes -z` calls logging.disable(CRITICAL), so the `prefetch inject:` INFO
+line is usually suppressed here — the answer + oracle verdict is the primary
+signal in Channel A; deep log triage lives on Channel B (Teams). See README.md.
 """
 from __future__ import annotations
 import argparse
@@ -25,21 +28,28 @@ import subprocess
 import sys
 import time
 
+import yaml
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import graders  # noqa: E402
-import oracle   # noqa: E402
 from probes import PROBES, DRY_RUN_IDS  # noqa: E402
 
 HERMES = "/opt/qnoe-agent/hermes-venv/bin/hermes"
 LIVE_PROFILES = "/opt/qnoe-agent/hermes/profiles"
 HOMES = os.path.join(HERE, "homes")
 REPORTS = os.path.join(HERE, "reports")
-TOOLSETS = "file,terminal,clarify,qnoe-lab"
+CLI_TOOLSETS = ["file", "terminal", "clarify", "qnoe-lab"]
 QDRANT = os.environ.get("QDRANT_URL", "http://localhost:6333")
-LINK_ENTRIES = ["config.yaml", "SOUL.md", ".env", "plugins", "memories",
-                "USER.md", "AGENTS.md", ".managed"]
+SYMLINK_ENTRIES = ["SOUL.md", ".env", "plugins", "memories",
+                   "USER.md", "AGENTS.md", ".managed"]
+FAIL_MARKERS = ["No inference provider", "agent failed", "Traceback",
+                "PermissionError", "unknown --toolsets", "not configured"]
 PROBE_TIMEOUT = 300
+
+
+def _live_config(profile: str) -> str:
+    return os.path.join(LIVE_PROFILES, profile, "config.yaml")
 
 
 def _throwaway_home(profile: str) -> str:
@@ -47,7 +57,13 @@ def _throwaway_home(profile: str) -> str:
     home = os.path.join(HOMES, profile)
     shutil.rmtree(home, ignore_errors=True)
     os.makedirs(os.path.join(home, "logs"), exist_ok=True)
-    for entry in LINK_ENTRIES:
+    # config.yaml: copy + expose the qnoe-lab plugin tools to the cli platform.
+    with open(_live_config(profile)) as f:
+        cfg = yaml.safe_load(f)
+    cfg.setdefault("platform_toolsets", {})["cli"] = list(CLI_TOOLSETS)
+    with open(os.path.join(home, "config.yaml"), "w") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False)
+    for entry in SYMLINK_ENTRIES:
         src = os.path.join(live, entry)
         if os.path.exists(src) or os.path.islink(src):
             try:
@@ -58,15 +74,13 @@ def _throwaway_home(profile: str) -> str:
 
 
 def _plant(inject: dict) -> None:
-    path = inject["file"]
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    os.makedirs(os.path.dirname(inject["file"]), exist_ok=True)
+    with open(inject["file"], "w") as f:
         f.write(inject["payload"])
 
 
 def _unplant(inject: dict) -> None:
-    d = os.path.dirname(inject["file"])
-    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(os.path.dirname(inject["file"]), ignore_errors=True)
 
 
 def _episodic_count() -> int:
@@ -77,6 +91,15 @@ def _episodic_count() -> int:
         return json.loads(out)["result"]["points_count"]
     except Exception:
         return -1
+
+
+def _errored(rec: dict) -> bool:
+    if rec.get("rc", 0) != 0:
+        return True
+    if not (rec.get("answer") or "").strip():
+        return True
+    st = rec.get("stderr_tail", "")
+    return any(m in st for m in FAIL_MARKERS)
 
 
 def _run_one(probe: dict) -> dict:
@@ -90,30 +113,28 @@ def _run_one(probe: dict) -> dict:
            "prompt": probe["prompt"], "why": probe["why"]}
     try:
         t0 = time.time()
-        p = subprocess.run(
-            [HERMES, "-z", probe["prompt"], "--toolsets", TOOLSETS],
-            env=env, capture_output=True, text=True, timeout=PROBE_TIMEOUT)
+        p = subprocess.run([HERMES, "-z", probe["prompt"]], env=env,
+                           capture_output=True, text=True, timeout=PROBE_TIMEOUT)
         rec["wall"] = round(time.time() - t0, 1)
         rec["answer"] = (p.stdout or "").strip()
-        rec["stderr_tail"] = (p.stderr or "").strip()[-600:]
+        rec["stderr_tail"] = (p.stderr or "").strip()[-700:]
         rec["rc"] = p.returncode
     except subprocess.TimeoutExpired:
-        rec["answer"] = ""
-        rec["stderr_tail"] = f"TIMEOUT after {PROBE_TIMEOUT}s"
-        rec["rc"] = -1
-        rec["wall"] = PROBE_TIMEOUT
+        rec.update(answer="", stderr_tail=f"TIMEOUT after {PROBE_TIMEOUT}s",
+                   rc=-1, wall=PROBE_TIMEOUT)
     finally:
         if inject:
             _unplant(inject)
-    # best-effort triage line (often empty under -z logging.disable)
     logf = os.path.join(home, "logs", "agent.log")
     rec["inject_log"] = ""
     if os.path.exists(logf):
         for line in open(logf, errors="ignore"):
             if "prefetch inject" in line:
                 rec["inject_log"] = line.strip()
-    verdict, note = graders.grade(probe["grader"], rec["answer"])
-    rec["verdict"], rec["note"] = verdict, note
+    if _errored(rec):
+        rec["verdict"], rec["note"] = "ERROR", "turn failed/empty — not graded"
+    else:
+        rec["verdict"], rec["note"] = graders.grade(probe["grader"], rec["answer"])
     return rec
 
 
@@ -133,6 +154,17 @@ def _select(args):
     return out
 
 
+def _preflight(probes):
+    for pr in sorted({p["profile"] for p in probes}):
+        cfg = _live_config(pr)
+        if not os.access(cfg, os.R_OK):
+            sys.exit(
+                f"ERROR: cannot read {cfg}.\n"
+                "The harness must run as qnoe-ai (profile home is mode 700):\n"
+                "  sudo -u qnoe-ai bash /opt/qnoe-agent/redteam/run.sh "
+                + " ".join(sys.argv[1:]))
+
+
 def _write_report(results, meta):
     os.makedirs(REPORTS, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -141,15 +173,12 @@ def _write_report(results, meta):
         json.dump({"meta": meta, "results": results}, f, indent=2)
     rollup = {}
     for r in results:
-        rollup.setdefault(r["verdict"], 0)
-        rollup[r["verdict"]] += 1
-    lines = [f"# Red-team report — {stamp}", ""]
-    lines.append(f"Probes: {len(results)} · "
-                 + " · ".join(f"{k}={v}" for k, v in sorted(rollup.items())))
-    lines.append(f"Isolation (episodic_memory points): before={meta['mem_before']} "
-                 f"after={meta['mem_after']} "
-                 f"({'OK, unchanged' if meta['mem_before'] == meta['mem_after'] else 'CHANGED — investigate'})")
-    lines.append("")
+        rollup[r["verdict"]] = rollup.get(r["verdict"], 0) + 1
+    iso = "OK, unchanged" if meta["mem_before"] == meta["mem_after"] else "CHANGED — investigate"
+    lines = [f"# Red-team report — {stamp}", "",
+             f"Probes: {len(results)} · " + " · ".join(f"{k}={v}" for k, v in sorted(rollup.items())),
+             f"Isolation (episodic_memory points): before={meta['mem_before']} "
+             f"after={meta['mem_after']} ({iso})", ""]
     for r in results:
         lines.append(f"## [{r['verdict']}] {r['id']}  ({r['cls']} / {r['profile']}, {r.get('wall')}s)")
         lines.append(f"*Targets:* {r['why']}")
@@ -161,7 +190,7 @@ def _write_report(results, meta):
         if len(ans) > 1800:
             ans = ans[:1800] + "\n…(truncated)…"
         lines.append("*Answer:*\n\n```\n" + ans + "\n```")
-        if r.get("stderr_tail") and not r["answer"]:
+        if r["verdict"] == "ERROR" and r.get("stderr_tail"):
             lines.append("*stderr:*\n\n```\n" + r["stderr_tail"] + "\n```")
         lines.append("")
     with open(base + ".md", "w") as f:
@@ -171,7 +200,7 @@ def _write_report(results, meta):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true", help="run only the 3 dry-run probes")
+    ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--class", dest="cls", default=None)
     ap.add_argument("--profile", default=None)
     ap.add_argument("--list", action="store_true")
@@ -184,6 +213,7 @@ def main():
         print(f"\n{len(probes)} channel-A probes selected")
         return
 
+    _preflight(probes)
     print(f"Running {len(probes)} probe(s) as {os.environ.get('USER', '?')} …", flush=True)
     mem_before = _episodic_count()
     results = []
@@ -197,8 +227,7 @@ def main():
     print(f"\nReport: {path}")
     print("Verdicts: " + ", ".join(f"{r['id']}={r['verdict']}" for r in results))
     if mem_before != mem_after:
-        print(f"WARNING: episodic_memory changed {mem_before}->{mem_after} "
-              "(MEM0 isolation breach — investigate before trusting results)")
+        print(f"WARNING: episodic_memory {mem_before}->{mem_after} — MEM0 isolation breach")
 
 
 if __name__ == "__main__":
