@@ -24,7 +24,7 @@ from concurrent.futures import (
     BrokenExecutor as _BrokenExecutor,
     as_completed,
 )
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import psutil
@@ -232,8 +232,110 @@ def _get_sp_manifest_conn() -> sqlite3.Connection:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(sp_manifest)")}
     if "web_url" not in cols:
         conn.execute("ALTER TABLE sp_manifest ADD COLUMN web_url TEXT")
+    # Activity log: one row per sync run (poller or nightly), so the nightly
+    # report can surface work done by the always-on SharePoint poller, which
+    # otherwise ingests directly and leaves no trace the report can read.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sp_activity (
+            id            INTEGER PRIMARY KEY,
+            ts            TEXT NOT NULL,
+            source        TEXT NOT NULL,
+            site          TEXT NOT NULL,
+            processed     INTEGER DEFAULT 0,
+            new           INTEGER DEFAULT 0,
+            updated       INTEGER DEFAULT 0,
+            skipped       INTEGER DEFAULT 0,
+            deleted       INTEGER DEFAULT 0,
+            errors        INTEGER DEFAULT 0,
+            skipped_files TEXT,
+            failed_files  TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sp_activity_ts ON sp_activity(ts)")
     conn.commit()
     return conn
+
+
+def record_sp_activity(source: str, site: str, stats: dict) -> None:
+    """Persist one sync run's stats to the sp_activity log.
+
+    `source` is "poller" (30-min watcher poller) or "nightly". This is what
+    makes the poller's continuous ingestion visible to the daily report — the
+    poller consumes the Graph delta token as it runs, so by report time its own
+    re-run of delta_sync sees nothing. The report reads this log instead.
+    """
+    conn = _get_sp_manifest_conn()
+    try:
+        now = datetime.now(timezone.utc)
+        conn.execute(
+            """INSERT INTO sp_activity
+               (ts, source, site, processed, new, updated, skipped, deleted,
+                errors, skipped_files, failed_files)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                now.isoformat(), source, site,
+                int(stats.get("processed", 0)), int(stats.get("new", 0)),
+                int(stats.get("updated", 0)), int(stats.get("skipped", 0)),
+                int(stats.get("deleted", 0)), int(stats.get("errors", 0)),
+                json.dumps(stats.get("skipped_files", [])),
+                json.dumps(stats.get("failed_files", [])),
+            ),
+        )
+        # Keep the table small — 30 days of history is plenty for the report.
+        cutoff = (now - timedelta(days=30)).isoformat()
+        conn.execute("DELETE FROM sp_activity WHERE ts < ?", (cutoff,))
+        conn.commit()
+    except Exception as exc:
+        logger.warning("Could not record SP activity for %s: %s", site, exc)
+    finally:
+        conn.close()
+
+
+def summarize_sp_activity(hours: int = 24) -> dict:
+    """Aggregate recorded SharePoint sync activity within the last `hours`.
+
+    Returns {"window_hours", "by_site": {site: {processed, new, updated,
+    skipped, deleted, errors, sources, skipped_files, failed_files}}}.
+    """
+    conn = _get_sp_manifest_conn()
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        rows = conn.execute(
+            """SELECT site, source, processed, new, updated, skipped, deleted,
+                      errors, skipped_files, failed_files
+               FROM sp_activity WHERE ts >= ?""",
+            (cutoff,),
+        ).fetchall()
+    except Exception as exc:
+        logger.warning("Could not summarize SP activity: %s", exc)
+        rows = []
+    finally:
+        conn.close()
+
+    by_site: dict = {}
+    for (site, source, processed, new, updated, skipped, deleted, errors,
+         skipped_json, failed_json) in rows:
+        agg = by_site.setdefault(site, {
+            "processed": 0, "new": 0, "updated": 0, "skipped": 0,
+            "deleted": 0, "errors": 0, "sources": set(),
+            "skipped_files": [], "failed_files": [],
+        })
+        agg["processed"] += processed or 0
+        agg["new"] += new or 0
+        agg["updated"] += updated or 0
+        agg["skipped"] += skipped or 0
+        agg["deleted"] += deleted or 0
+        agg["errors"] += errors or 0
+        agg["sources"].add(source)
+        try:
+            agg["skipped_files"].extend(json.loads(skipped_json or "[]"))
+            agg["failed_files"].extend(json.loads(failed_json or "[]"))
+        except (TypeError, ValueError):
+            pass
+    # Sets are not JSON-serializable — the report writes this dict to JSON.
+    for agg in by_site.values():
+        agg["sources"] = sorted(agg["sources"])
+    return {"window_hours": hours, "by_site": by_site}
 
 
 def _is_unchanged(sp_conn: sqlite3.Connection, item_id: str, etag: str) -> bool:
@@ -602,7 +704,7 @@ def delta_sync(site_cfg: dict, cfg: dict, token: str) -> dict:
     client = QdrantClient(url=QDRANT_URL)
     sp_conn = _get_sp_manifest_conn()
     temp_dir = Path(cfg.get("temp_dir", "/tmp/qnoe-sharepoint/"))
-    stats: dict = {"processed": 0, "new": 0, "updated": 0, "skipped": 0, "deleted": 0, "errors": 0, "failed_files": []}
+    stats: dict = {"processed": 0, "new": 0, "updated": 0, "skipped": 0, "deleted": 0, "errors": 0, "failed_files": [], "skipped_files": []}
 
     token_ts = time.monotonic()
     drive_map = _resolve_drive_ids(site_cfg, token)
@@ -652,7 +754,11 @@ def delta_sync(site_cfg: dict, cfg: dict, token: str) -> dict:
                     else:
                         stats["updated"] += 1
                 else:
+                    # A changed item that produced nothing — chunk timeout,
+                    # worker crash, empty parse, oversized, etc. Record the
+                    # name so the report can surface silently-dropped files.
                     stats["skipped"] += 1
+                    stats["skipped_files"].append(item.get("name", "unknown"))
             except Exception as exc:
                 logger.error("SP delta item error: %s", exc)
                 stats["errors"] += 1

@@ -41,6 +41,7 @@ try:
     from agent.ingest.sharepoint_sync import (
         delta_sync as _sp_delta_sync,
         load_sharepoint_config as _sp_load_config,
+        record_sp_activity as _sp_record_activity,
     )
     from agent.ingest.sharepoint_client import authenticate as _sp_authenticate
     _SP_AVAILABLE = True
@@ -430,6 +431,10 @@ class SharePointPoller(threading.Thread):
                     break
                 try:
                     stats = _sp_delta_sync(site, cfg, token)
+                    # Persist this run so the daily report can see poller work —
+                    # by report time the delta token is consumed and a re-run
+                    # of delta_sync shows nothing.
+                    _sp_record_activity("poller", site["name"], stats)
                     if any(v > 0 for v in stats.values() if isinstance(v, int)):
                         logger.info(
                             "SharePointPoller: %s — %s", site["name"], stats

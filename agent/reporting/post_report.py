@@ -153,12 +153,36 @@ def _task_detail(t: dict) -> str:
     if n == "task_sync_sharepoint":
         parts = []
         for site, s in stats.items():
+            if site == "poller_activity_24h":
+                continue
             if isinstance(s, dict):
                 new = s.get('new', 0)
                 upd = s.get('updated', 0)
                 parts.append(f"{site}: {new} new, {upd} updated, "
                              f"{s.get('deleted', 0)} deleted, {s.get('errors', 0)}✗")
-        return " | ".join(parts) if parts else "—"
+        detail = "nightly delta — " + (" | ".join(parts) if parts else "—")
+        # The always-on 30-min poller does the real ingestion; surface its
+        # 24h activity (and any silently dropped files) here.
+        pa = stats.get("poller_activity_24h") or {}
+        by_site = pa.get("by_site") or {}
+        hrs = pa.get("window_hours", 24)
+        if by_site:
+            pseg = []
+            for site, a in by_site.items():
+                seg = (f"{site}: {a.get('new', 0)} new, {a.get('updated', 0)} updated, "
+                       f"{a.get('deleted', 0)} deleted, {a.get('skipped', 0)} skipped, "
+                       f"{a.get('errors', 0)}✗")
+                dropped = (a.get('skipped_files') or []) + (a.get('failed_files') or [])
+                if dropped:
+                    shown = ", ".join(dropped[:5])
+                    if len(dropped) > 5:
+                        shown += f", +{len(dropped) - 5} more"
+                    seg += f" — <b>dropped:</b> {shown}"
+                pseg.append(seg)
+            detail += f"<br>poller ({hrs}h): " + " | ".join(pseg)
+        else:
+            detail += f"<br>poller ({hrs}h): no activity"
+        return detail
     if n == "task_scan_qcodes":
         return f"{stats.get('dbs_found', 0)} DBs, +{stats.get('new_runs', 0)} runs"
     if n == "task_process_change_queue":

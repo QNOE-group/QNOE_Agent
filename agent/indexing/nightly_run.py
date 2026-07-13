@@ -216,6 +216,8 @@ def task_sync_sharepoint() -> None:
         from agent.ingest.sharepoint_sync import (
             load_sharepoint_config,
             delta_sync,
+            record_sp_activity,
+            summarize_sp_activity,
         )
         from agent.ingest.sharepoint_client import authenticate
     except ImportError as exc:
@@ -245,8 +247,15 @@ def task_sync_sharepoint() -> None:
     for site in cfg.get("sites", []):
         logger.info("SP delta sync (nightly): %s", site["name"])
         site_stats = delta_sync(site, cfg, token)
+        record_sp_activity("nightly", site["name"], site_stats)
         all_stats[site["name"]] = site_stats
         logger.info("SP nightly done for %s: %s", site["name"], site_stats)
+
+    # The 30-min watcher poller consumes the delta token as it runs, so the
+    # nightly delta above almost always shows ~0. Surface what the poller
+    # actually ingested over the last 24h so its work — and any silently
+    # skipped/failed files — appears in the report.
+    all_stats["poller_activity_24h"] = summarize_sp_activity(24)
 
     # Safety net for the find_file tool: delta_sync writes web_url only for
     # changed files, so backfill any manifest rows still missing it (from a
@@ -613,12 +622,36 @@ def _summarise_stats(task_name: str, stats: dict) -> str:
     if task_name == "task_sync_sharepoint":
         parts = []
         for site, s in stats.items():
+            if site == "poller_activity_24h":
+                continue
             if isinstance(s, dict):
                 new = s.get('new', 0)
                 upd = s.get('updated', 0)
                 detail = f"{new}↑ {upd}✎" if (new or upd) else f"{s.get('processed', 0)}✓"
                 parts.append(f"{site}: {detail} del={s.get('deleted', 0)} err={s.get('errors', 0)}")
-        return " | ".join(parts)
+        summary = "nightly delta: " + (" | ".join(parts) if parts else "none")
+        # Surface the 30-min poller's actual 24h ingestion — the real work,
+        # invisible to the nightly delta above (token already consumed).
+        pa = stats.get("poller_activity_24h") or {}
+        by_site = pa.get("by_site") or {}
+        hrs = pa.get("window_hours", 24)
+        if by_site:
+            pseg = []
+            for site, a in by_site.items():
+                seg = (f"{site}: {a.get('new', 0)}↑ {a.get('updated', 0)}✎ "
+                       f"del={a.get('deleted', 0)} skip={a.get('skipped', 0)} "
+                       f"err={a.get('errors', 0)}")
+                dropped = (a.get('skipped_files') or []) + (a.get('failed_files') or [])
+                if dropped:
+                    shown = ", ".join(dropped[:5])
+                    if len(dropped) > 5:
+                        shown += f", +{len(dropped) - 5} more"
+                    seg += f" [dropped: {shown}]"
+                pseg.append(seg)
+            summary += f"\n           poller {hrs}h: " + " | ".join(pseg)
+        else:
+            summary += f"\n           poller {hrs}h: no activity"
+        return summary
     if task_name == "task_scan_qcodes":
         return (f"{stats.get('dbs_found', 0)} DBs, "
                 f"+{stats.get('new_runs', 0)} runs")

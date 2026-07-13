@@ -1,5 +1,5 @@
 # Mistakes & Pitfalls
-*Last updated: 2026-07-09 (M35-M36 added — context-pressure package findings)*
+*Last updated: 2026-07-13 (M47 — SharePoint poller reporting blind spot + silent-skip drops)*
 
 > Bugs fixed and hard-won technical lessons. Check here before debugging similar issues.
 > Related: [[memory/deploy-patterns]] · [[memory/infrastructure]] · [[SETUP_LOG]]
@@ -335,3 +335,23 @@ Closes roadmap step 5 of [[CONTEXT_PRESSURE_REPORT]]. Numbering note: M39 (unifi
 **Mechanism:** `sync_turn()` fed BOTH user and assistant messages to `mem0.add()` — Mem0 distilled the assistant's claims into user-keyed facts. Confabulate once → remember forever → self-reinforcing.
 **Fixes (all 2026-07-10):** (1) purge poisoned points (Qdrant delete by id); (2) `mem0.add()` now receives the **user message only**; (3) SOUL rule: the memory block is about the USER — never a source for physics/lab facts.
 **Lessons:** (1) any write-back memory over agent output is a confabulation amplifier — store only user-authored content unless outputs are verified; (2) the per-turn injection log (M45's fix) is what made this diagnosable in one look; (3) test memory with a QUESTION THE AGENT PREVIOUSLY ANSWERED WRONGLY — that's the poisoning probe.
+
+
+## M47 — SharePoint poller: silently dropped files, invisible to the nightly report (2026-07-13)
+
+**Symptom:** user added ~13 papers to `TwistedMaterials/QTOM/Relevant papers` on 2026-07-10; 11 got indexed, **2 never did** and appeared in **no** nightly report (07-10, 07-11, or later). Files: `proposed-quantum-twisting-...pdf`, `revealing-electron-electron-interactions-...pdf`.
+
+**Three stacked bugs found:**
+1. **ProcessPoolExecutor worker crash on the 2nd Docling conversion.** `_chunk_file_safe` uses a fresh `_PPE(max_workers=1)` per file, but back-to-back conversions in one process crash the forked worker (`_BrokenExecutor`). File #2 failed via the pool yet chunked fine (27 chunks/8s) when run standalone — proving it's a flaky pool crash, not a bad PDF. First-in-process item succeeds; later ones are at risk.
+2. **`delta_sync` advances the Graph delta token unconditionally** (`_save_delta_link` at end of each drive pass) even when items errored/skipped. A once-failed file is **never retried** — the delta only re-surfaces it if the file itself changes. Silent permanent loss.
+3. **Failures were counted as invisible "skips."** A chunk crash makes `_process_item` return `False` → tallied as `skipped`, NOT `errors`/`failed_files`. The report line only rendered `✓`/`✗`; skips (and their filenames) vanished. Worse — the **30-min watcher `SharePointPoller` does the real ingestion**, but its stats go only to journald; the nightly `task_sync_sharepoint` re-runs `delta_sync` and sees ~0 because the poller already consumed the token. So poller work (success OR failure) never reached any report.
+
+**Fixes (2026-07-13, deployed + verified):**
+- **Backfilled both files** (19 + 27 chunks) by running `_process_item` one-file-per-fresh-process (avoids bug #1).
+- **Reporting (the user's ask):** new `sp_activity` table in `sharepoint.db`; `record_sp_activity(source, site, stats)` called by the poller (`source="poller"`) and nightly (`"nightly"`); `summarize_sp_activity(24)` aggregated into `task_sync_sharepoint` stats as `poller_activity_24h`; both txt (`_summarise_stats`) and Teams (`_task_detail`) renderers now show a `poller (24h): …` line **with a `dropped:` list** of skipped/failed filenames. `delta_sync` now records skipped **names**, not just a count. Files touched: `sharepoint_sync.py`, `smb_watcher.py`, `nightly_run.py`, `post_report.py`.
+
+**Still open (design fixes, not yet done):** bug #1 (recreate pool/subprocess per file, or serialize Docling) and bug #2 (don't advance the delta token past failed items — retry queue) remain. See [[TODO]].
+
+**Why it's unique to SharePoint:** SMB changes are *detect-only* → queued to `change_queue` → ingested+reported by the nightly `task_process_change_queue`. The SP poller is the **only** daemon path that performs terminal ingestion itself (the Graph delta token is consumed on read, so it can't defer to a batch) — which is exactly why its work was invisible.
+
+**Lessons:** (1) a "skip" that is actually a failure is worse than an error — it's silent; count/emit skipped filenames. (2) Any daemon that ingests directly (not via a reported queue) needs its own activity log the report reads. (3) `ProcessPoolExecutor` workers can carry corruption between tasks — for crash-prone native libs (Docling), isolate one task per process. (4) A consumed-on-read cursor (Graph delta token) must not be advanced past items that failed to process.
