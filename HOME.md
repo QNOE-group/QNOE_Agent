@@ -48,11 +48,14 @@
 | [[GPT_OSS_CUTOVER_PLAN]] | Hand-off plan for the production cutover to gpt-oss-120b via llama.cpp — executed 2026-07-10 |
 | [[GPT_OSS_PILOT_PLAN]] | Pilot plan for gpt-oss-120b — vLLM path FAILED (M39/M41); llama.cpp path won → see [[GPT_OSS_CUTOVER_PLAN]] |
 | [[MVP_VERIFICATION_PLAN]] | The 4 remaining MVP-1 acceptance tests (routing, RAG-paper, /switch recast, /help recast) — pre-declaration checklist |
+| `redteam/BACKLOG.md` | Red-team harness findings log (R1-R4, M47) — the adversarial test loop's memory |
 | [[MEM0_INTEGRATION]] | Program to add per-user Mem0 memory inside `qnoe_rag` (see [[memory/decisions#D13]]) |
 | [[REPO_MAPPING]] | Repo → Qdrant collection mapping |
 | [[WATCHER_PLAN]] | SMB3 watcher daemon design |
 
 ## Active Workstream
 
-**MVP-1 DECLARED (2026-07-10)** — all rescoped acceptance criteria pass (see [[SETUP_LOG]] declaration section). Stack: gpt-oss-120b via llama.cpp (4×64K), 3 Hermes profiles, hybrid RAG + Mem0 + QCoDeS registry grounding, T0/T1 read-only. Verification round surfaced and fixed M44-M46 (incl. Mem0 memory poisoning).
-Next: Phase 2 planning ([[PHASE2_BACKLOG]] — B8/B9/B10 first candidates), ride-along re-tests in [[TODO]], PPTX Gantt before PI presentation.
+**MVP-1 DECLARED (2026-07-10)** — all rescoped acceptance criteria pass (see [[SETUP_LOG]] declaration section). Stack: gpt-oss-120b via llama.cpp (4×64K), 3 Hermes profiles, hybrid RAG + Mem0 + QCoDeS registry grounding, T0/T1 read-only.
+
+**Red-team loop (2026-07-14)** — built a repeatable adversarial harness (`redteam/`, findings in `redteam/BACKLOG.md`). Rounds 1-2 found+fixed: R1/R2 tool-selection (Tool Search now OFF → qcodes tools resident; `tool_use_enforcement` back true), **M47 mass Mem0 poisoning** (purged 40+ pre-fix confabulated facts), R3 calibration, R4 read-only. R2 residual (~60% "latest sweep" reliability, gpt-oss intermittency) DEFERRED. Injection/refusal/attribution/run-existence confirmed solid.
+Next: re-verify R3/R4, add fresh probe classes; Phase 2 ([[PHASE2_BACKLOG]] B8/B9/B10); PPTX Gantt before PI presentation.

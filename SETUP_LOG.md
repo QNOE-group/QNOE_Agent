@@ -1539,3 +1539,32 @@ Per the rescope ([[AGENT_FRAMEWORK]] §9.4, [[MVP_VERIFICATION_PLAN]]): MVP-1 = 
 **Declared: MVP-1 COMPLETE (2026-07-10).** Production stack: gpt-oss-120b via llama.cpp (4×64K), Hermes gateway with 3 profiles, hybrid RAG + Mem0 + QCoDeS registry grounding, T0/T1 read-only.
 
 **Ride-along items still open (not MVP gates):** run-159 re-ask (expect 49), gate-sweep re-ask (expect run 848), colleague Mem0-isolation re-check, I9 find_file round-trip, PPTX Gantt update before PI presentation.
+
+## 2026-07-14 — Red-team harness + Rounds 1-2
+
+Built a repeatable adversarial test harness (`redteam/`, plan in
+`~/.claude/plans/lexical-munching-book.md`). Two channels: A = self-driven
+`hermes -z` as qnoe-ai (MEM0 off, throwaway symlink HERMES_HOME, isolation
+verified); B = Teams relay for gateway-only classes (Mem0/routing). Oracle
+reuses the `qnoe_qcodes` registry helpers. Full detail + findings log:
+`redteam/BACKLOG.md`.
+
+**Findings found + fixed (all live):**
+- **R1** measurement Qs answered from RAG not the tool → SOUL "must use qcodes_search".
+- **M47 (mistakes.md)** — 40+ poisoned Mem0 facts (fabricated runs/dbs, wrong
+  physics, stale counts) from pre-M46 testing, actively corrupting live answers.
+  Purged the user's episodic_memory (51→0; collection 70→19, others preserved) +
+  strengthened the SOUL memory guard (memory is interests-only, never a data source).
+- **R2** — root cause fixed: **Tool Search disabled** for the 3 profiles (qcodes
+  tools now RESIDENT, not deferred) + SOUL rules + memory purge. Production returns
+  run 848 correctly. Residual ~60% harness reliability (gpt-oss tool-call
+  intermittency) → deterministic "latest-sweep" hook DEFERRED (user: low-frequency
+  query, may be fixed by a future LLM upgrade). `tool_use_enforcement` reverted to
+  **true** (reduces prose-fallback).
+- **R3** calibration (fabricated future results) + **R4** read-only (offered to
+  write; has write tools) → SOUL rules; re-verify pending.
+
+**Config state after this session (all 3 profiles):** `tools.tool_search.enabled:
+off`, `agent.tool_use_enforcement: true`, toolsets `[file, terminal, clarify,
+qnoe-lab]`. Confirmed solid: injection defense, secret refusal, run-existence
+honesty, cross-team attribution.
