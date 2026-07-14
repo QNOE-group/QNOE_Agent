@@ -1,6 +1,6 @@
 name: qnoe_authz
-description: "QNOE access control — polite refusal for non-allowlisted Teams users (pre_gateway_dispatch hook)"
-version: "0.1.0"
+description: "QNOE access control — notify-and-approve for Teams users (channel notification on new user; admin /approve /deny /revoke /pending DM commands)"
+version: "0.2.0"
 author: "QNOE Lab"
 provides_hooks:
   - pre_gateway_dispatch
