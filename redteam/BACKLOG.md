@@ -101,3 +101,20 @@ battery is MEM0-off and wrote nothing).
   is fixed; remaining flakiness is reduce-not-eliminate.
 - Lever tried: re-enabled `tool_use_enforcement: true` (was false since cutover /
   D15) to push structured tool calls. Measure pass-rate via repeated `--class tool`.
+
+### R2 — FINAL STATUS: root cause fixed; residual intermittency DEFERRED (2026-07-14)
+- Root cause (answered from RAG/terminal/memory instead of qcodes_search): FIXED —
+  un-defer (tool_search off → qcodes_search resident) + SOUL rules + memory purge.
+  Production (Teams) returns run 848 correctly.
+- Residual: ~60% reliability on "latest/last X sweep in setup" via the harness
+  (5× measurement = 3 PASS / 2 empty-search). Cause is gpt-oss tool-call
+  intermittency (over-literal args / prose-fallback), not a config bug. Prompt +
+  `tool_use_enforcement: true` (re-enabled — helped prose-fallback) plateau here.
+- **Decision (user, 2026-07-14): DEFER the deterministic "latest-sweep" hook.**
+  Rationale: "last run" is a low-frequency query, and a future LLM upgrade may
+  fix the tool-call intermittency for free — don't build/maintain a workaround
+  that could become unnecessary friction. If we DO want 100% later, the pattern
+  is the run-ID registry hook cousin: detect "latest [swept] sweep in [setup]",
+  run _search(swept_parameter, path) sorted by time in code, inject the answer.
+- Keep `tool-last-gatesweep` as a standing reliability meter; re-measure after any
+  model/config change.
