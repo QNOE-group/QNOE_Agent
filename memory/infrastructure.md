@@ -46,9 +46,38 @@ Does NOT persist across reboots. Re-run after each restart. Prompts for ICFO pas
 | Watcher | systemd `qnoe-watcher.service` | SMB3 file watcher, ~37K cached files |
 | Hermes Agent | systemd `qnoe-hermes.service` | Native (no Docker), Teams polling, per-user profile routing. **Since 2026-07-14: runs under B7 read-only namespace** (see section below) |
 
-## B7 Read-Only Sandbox on qnoe-hermes (2026-07-14, [[memory/decisions#D17]])
+## B7-OS: OpenShell Sandbox on the Hermes Gateway (ACTIVE since 2026-07-14 evening, [[memory/decisions#D18]])
 
-Red-team R4 proved read-only was SOUL-only (agent wrote a repo file 1/5 runs). Now OS-enforced via
+**Production unit: `qnoe-hermes-sandbox.service`** (enabled at boot) → `scripts/start_hermes_sandbox.sh` →
+`openshell sandbox create --name qnoe-hermes --from qnoe-hermes:0.1 --policy config/sandbox-policy.yaml
+--driver-config-json "$(cat config/hermes-sandbox-mounts.json)" -- scripts/start_hermes.sh`, uid 1001.
+`Conflicts=qnoe-hermes.service` both ways = single-Teams-poller guarantee.
+
+- **Stack:** OpenShell v0.0.82 (deb; 0.0.59 deb kept in /tmp for rollback) · `openshell-gateway.service`
+  now passes `--config /opt/qnoe-agent/config/gateway.toml` (`enable_bind_mounts = true`) · image
+  `qnoe-hermes:0.1` (Dockerfile.hermes; build from an ISOLATED context dir, never /opt/qnoe-agent) ·
+  default-deny mounts per `config/hermes-sandbox-mounts.json` · landlock + L7 egress proxy per
+  `config/sandbox-policy.yaml` (single source of truth).
+- **Verified 2026-07-14:** b7_probe 24/24 in-sandbox (`sudo systemctl start qnoe-b7-sandbox-test`);
+  Teams/Mem0(across restarts)/RAG/qcodes-848; R4 perm-write probe = model attempted, EROFS, file
+  unchanged; drills: gateway-restart self-heal (~60s), docker kill, clean stop, Conflicts flips.
+- **Rollback (any time, seconds):** `sudo systemctl start qnoe-hermes` (systemd-namespace mechanism
+  below — kept installed+disabled). Full OpenShell rollback: 0.0.59 deb + revert gateway.toml.
+- **Runtime traps + fixes:** [[memory/mistakes#M51]] (HOME=/sandbox, landlock /dev/null + read
+  restrictions, L7 proxy-by-hostname via host.openshell.internal, no hardcoded localhost) and
+  [[memory/mistakes#M50]] (diff live vs repo before overwriting deployed plugins).
+- **Ops notes:** teams.env is bind-mounted by inode — rotate ⇒ `systemctl restart qnoe-hermes-sandbox`.
+  Probe/launcher scripts must `openshell sandbox delete` (containers linger after command exit; a
+  lingering gateway container = 2nd poller). Audit: `sudo systemctl status openshell-gateway -n 200`
+  (L7 denials) + `~qnoe-ai/.local/state/openshell/gateway/openshell.db`. Host /etc/hosts has
+  `127.0.0.1 host.openshell.internal` (LLM base_url alias, all 4 hermes configs). Harness Channel A
+  (`hermes -z`) remains UNCONFINED on the host.
+- **Pending soak:** nightly cron visibility (morning after 2026-07-14), SharePoint-sync query, watch
+  `logs/` + journal for landlock/proxy denials in daily use.
+
+## B7 Read-Only Sandbox via systemd namespace (2026-07-14 — SUPERSEDED same day by B7-OS above; unit kept as ROLLBACK, [[memory/decisions#D17]])
+
+Red-team R4 proved read-only was SOUL-only (agent wrote a repo file 1/5 runs). OS-enforced via
 systemd mount namespace — drop-in `/etc/systemd/system/qnoe-hermes.service.d/50-b7-readonly.conf`
 (repo copy: `hermes/scripts/qnoe-hermes.service.d/`):
 
