@@ -339,7 +339,14 @@ QCODES_REGISTRY_DBS = [
     ),
     "/opt/qnoe-agent/memory/episodic.db",
 ]
-_RUN_ID_RE = re.compile(r"\brun[\s_#]*(\d{1,7})\b", re.IGNORECASE)
+# Matches run 159 / run_159 / run#159 / run159 AND "run with ID 159",
+# "run id 159", "run number 159", "run no. 159" (red-team R5, 2026-07-14 —
+# the narrow form missed "run with ID N" so the hook didn't fire and the
+# agent answered from RAG with a wrong count).
+_RUN_ID_RE = re.compile(
+    r"\brun[\s_]*(?:with[\s_]+)?(?:id|number|no\.?|#)?[\s_#:]*(\d{1,7})\b",
+    re.IGNORECASE,
+)
 _QCODES_HINT_RE = re.compile(
     r"qcodes|measur|dataset|\brun\b", re.IGNORECASE
 )

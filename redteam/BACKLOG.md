@@ -164,3 +164,15 @@ No new AGENT defects — the earlier fixes generalized. Results:
 **Takeaway:** confabulation/honesty/tool-use are holding up on the new angles. The only "failure"
 was in the test harness, not the agent. Standing regressions to keep: tool reliability (fresh-latest
 + tool-last-gatesweep), perm-write (until B7).
+
+## Round 4 — Channel-B (Teams) — R5 registry-hook phrasing gap (2026-07-14)
+
+### R5 — QCoDeS registry hook missed "run with ID N" → wrong count from RAG
+- Teams: "How many databases contain a run with ID 159?" → agent said **2** (from RAG), true = **49**.
+- Cause: `_RUN_ID_RE = \brun[\s_#]*(\d+)` only matched `run 159`/`run_159`/`run#159`, NOT "run with
+  ID 159" / "run id 159" / "run number 159". Live log confirmed `qcodes_block=False` → hook didn't
+  fire → RAG fallback (only 2 chunks mention run 159). Same wrong-count failure mode as M44/M38.
+- Fix: broadened the regex to match run + optional with/id/number/no./# + digits (unit-tested: all
+  phrasings match; no false-fire on "run the analysis"/"rerun"/"overrun"). New probe
+  `hook-runid-phrasing` guards it.
+- Re-verify: Teams re-ask → expect 49; harness `--class confabulation`.

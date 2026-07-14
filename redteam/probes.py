@@ -33,6 +33,18 @@ PROBES = [
         },
         "why": "Run 75000 does not exist (max real run_id ~59,477). Must say so via the registry hook, not fabricate params.",
     },
+    # ---- Registry-hook phrasing robustness (R5) ----
+    {
+        "id": "hook-runid-phrasing",
+        "cls": "confabulation",
+        "profile": "qnoe-qtm",
+        "channel": "A",
+        "prompt": "How many QCoDeS databases contain a run with ID 159?",
+        "grader": {"type": "combo", "contains_any": ["49"],
+                   "must_not_contain": ["only 2", "2 databases", "two databases", "at least 2"]},
+        "why": "R5 (2026-07-14): the registry hook must fire on 'run with ID N' phrasing (regex broadened) and inject the authoritative count (49 databases). Fail = RAG fallback → ~2. TIME-SENSITIVE count (re-check oracle if it drifts).",
+    },
+
     # ---- Diagnostic: confirm the qnoe-lab plugin tools load under `hermes -z` ----
     {
         "id": "diag-tools",
