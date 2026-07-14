@@ -1,32 +1,49 @@
   # ── SINGLE SOURCE OF TRUTH for the agent's confinement contract ──────────
-  # Any enforcement mechanism (current: systemd drop-in 50-b7-readonly.conf;
-  # future: plain Docker or OpenShell sandbox) must implement THIS file, and
+  # Any enforcement mechanism (systemd drop-in 50-b7-readonly.conf; OpenShell
+  # sandbox per B7-OS migration) must implement THIS file, and
   # scripts/b7_probe.sh is the mechanism-agnostic acceptance test (run it
   # inside the confinement; every line must PASS). When paths change here,
-  # update the active mechanism + the probe together. See memory/decisions D17
-  # and memory/infrastructure §B7 (incl. the /mnt/noe allowlist-drift lesson).
+  # update the active mechanism + the probe together. See memory/decisions
+  # D17/D18 and memory/infrastructure §B7 (incl. the /mnt/noe allowlist-drift
+  # lesson).
+  #
+  # Container semantics (OpenShell / docker — mount map in
+  # config/hermes-sandbox-mounts.json):
+  #   inaccessible  => NOT MOUNTED (absence beats unreadable)
+  #   read_only entries the gateway never reads (/mnt/noe, /ICFO/smbhome,
+  #     /home/yzamir outside qnoe_server_data) => NOT MOUNTED
+  #   read_only/read_write => explicit ro/rw bind mounts, target == source path
+  #     (hermes-venv shebangs are absolute-path-coupled)
   version: 1
 
   filesystem_policy:
     read_only:
       - /opt/qnoe-agent/models
       - /opt/qnoe-agent/config
+      - /opt/qnoe-agent/scripts     # entry script + b7_probe must exist in-container
       - /opt/qnoe-agent/venv
       - /opt/qnoe-agent/hermes-venv
       - /opt/qnoe-agent/agent
       - /opt/qnoe-agent/repos       # B7 gap: R4 write target — RAG/qcodes read these, never write
       - /opt/qnoe-agent/skills      # Phase 1: read-only (skill WRITES are a Phase-2 T2+ feature)
       - /ICFO/groups/NOE
-      - /ICFO/smbhome/yzamir
-      - /mnt/noe                    # 2nd CIFS mount of the NOE share (uid=qnoe-ai, watcher's) — was a full bypass, see redteam R4 follow-up
-      - /home/yzamir                # qcodes registry (qnoe_server_data) — read-only for the agent
+      - /ICFO/smbhome/yzamir            # container: not mounted
+      - /mnt/noe                        # container: not mounted. 2nd CIFS mount of the NOE share (uid=qnoe-ai) — was a full systemd bypass, redteam R4 follow-up
+      - /home/yzamir/qnoe_server_data   # qcodes registry (sqlite journal_mode=delete — ro readers need no side files; do NOT switch to WAL)
     inaccessible:
-      - /opt/qnoe-agent/secrets     # not even readable; teams.env is delivered by the mechanism (systemd LoadCredential= / docker --env-file)
+      - /opt/qnoe-agent/secrets     # systemd: InaccessiblePaths + LoadCredential; container: dir not mounted,
+                                    # ONLY secrets/teams.env single-file ro bind -> /run/qnoe/teams.env ($TEAMS_ENV_FILE)
+      - /home/qnoe-ai/.local        # container: not mounted — holds OpenShell's OWN gateway TLS/JWT keys; mounting it would let the confined agent steal them
+      - /home/qnoe-ai/.profile      # container: not mounted — poisoning it would run code unconfined at next gateway start
     read_write:
-      - /opt/qnoe-agent/memory      # Mem0 + SQLite episodic
+      - /opt/qnoe-agent/memory      # Mem0 + SQLite episodic + fastembed_cache (R9: BM25 cache must be persistent, not /tmp)
       - /opt/qnoe-agent/logs
       - /opt/qnoe-agent/hermes      # session state, profiles, plugins (HERMES_HOME)
-      - /home/qnoe-ai               # ~/.mem0, ~/.cache (fastembed)
+      - /home/qnoe-ai/.mem0         # Mem0 history db
+      - /home/qnoe-ai/.cache        # fastembed/transformers caches
+      # NOTE: under systemd the whole /home/qnoe-ai is rw (coarse); the container
+      # narrows it to .mem0/.cache — rest of $HOME is container-local (useradd -m)
+      # and evaporates on restart by design.
       # NOTE Phase 1: /ICFO/groups/NOE/ai_agent and skills/ are read-only
       # (were rw in the June 2026 LangGraph-era policy); restore rw in Phase 2 (T2+).
 
@@ -34,25 +51,35 @@
     compatibility: best_effort
 
   process:
-    run_as_user: sandbox
-    run_as_group: sandbox
+    # Numeric uid (supported since OpenShell v0.0.76) matching host qnoe-ai —
+    # all rw state (memory/, logs/, hermes/, ~/.mem0) is owned by 1001 and
+    # shared with host cron jobs. Dedicated-uid identity isolation is a
+    # Stage-7 hardening item (needs group-write rework on shared state).
+    run_as_user: 1001
+    run_as_group: 1001
 
   network_policies:
     llm:
       name: llamacpp-local
       endpoints:
-        - host: localhost
+        # host view: localhost:8000. Container view: docker bridge gateway IP,
+        # verified empirically in Stage 3 (placeholder below until then).
+        - host: 172.18.0.1
           port: 8000
           protocol: rest
           enforcement: enforce
           access: read-write
+          allowed_ips: ["172.16.0.0/12"]
       binaries:
-        - path: /opt/qnoe-agent/venv/bin/python
         - path: /opt/qnoe-agent/hermes-venv/bin/python3
+        - path: /usr/local/bin/python3.12   # symlink-resolved interpreter inside the image
+        - path: /usr/bin/curl               # b7_probe endpoint checks
 
     qdrant:
       name: qdrant-local
       endpoints:
+        # host view: localhost:6333 (published 0.0.0.0). Container view: bridge
+        # gateway IP, verified in Stage 3.
         - host: 172.18.0.1
           port: 6333
           protocol: rest
@@ -60,7 +87,9 @@
           access: read-write
           allowed_ips: ["172.16.0.0/12"]
       binaries:
-        - path: /opt/qnoe-agent/venv/bin/python
+        - path: /opt/qnoe-agent/hermes-venv/bin/python3
+        - path: /usr/local/bin/python3.12
+        - path: /usr/bin/curl
 
     github:
       name: github-api
@@ -71,7 +100,8 @@
           enforcement: enforce
           access: read-only
       binaries:
-        - path: /opt/qnoe-agent/venv/bin/python
+        - path: /opt/qnoe-agent/hermes-venv/bin/python3
+        - path: /usr/local/bin/python3.12
         - path: /usr/bin/git
 
     github_objects:
@@ -92,5 +122,14 @@
           protocol: rest
           enforcement: enforce
           access: read-write
+        # ROPC token auth (TEAMS_USERNAME/PASSWORD grant) authenticates here,
+        # NOT at graph.microsoft.com — invisible under systemd (no network
+        # enforcement), fatal under L7 enforce if missing.
+        - host: login.microsoftonline.com
+          port: 443
+          protocol: rest
+          enforcement: enforce
+          access: read-write
       binaries:
-        - path: /opt/qnoe-agent/venv/bin/python
+        - path: /opt/qnoe-agent/hermes-venv/bin/python3
+        - path: /usr/local/bin/python3.12

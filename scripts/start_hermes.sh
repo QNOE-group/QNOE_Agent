@@ -6,14 +6,19 @@ set -e
 
 # Hermes home — profiles, plugins, config, memory
 export HERMES_HOME=/opt/qnoe-agent/hermes
+# BM25 sparse-model cache — must live under a persistent rw path, NOT /tmp
+# (R9: PrivateTmp/tmpfs wiped it → RAG down, prefetch hooks crashed)
+export FASTEMBED_CACHE_PATH=/opt/qnoe-agent/memory/fastembed_cache
 
 # Model paths
 export EMBED_MODEL_PATH=/opt/qnoe-agent/models/nomic-embed
 export RERANK_MODEL_PATH=/opt/qnoe-agent/models/cross-encoder-msmarco
 
-# Infrastructure endpoints
-export QDRANT_URL=http://localhost:6333
-export VLLM_BASE_URL=http://localhost:8000/v1
+# Infrastructure endpoints — default-only so sandbox launchers can override
+# (in-container "localhost" is the container; the OpenShell sandbox passes the
+# docker bridge gateway IP via --env, see start_hermes_sandbox.sh)
+export QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
+export VLLM_BASE_URL="${VLLM_BASE_URL:-http://localhost:8000/v1}"
 # Mem0 fact-extraction LLM — must match the vLLM served model id exactly
 export MEM0_LLM_MODEL=gpt-oss-120b
 
@@ -46,14 +51,19 @@ export REPORT_CHANNEL_ID="19:ea61d54cf6aa40569022a334bc005c9a@thread.tacv2"
 # Home channel for cron job delivery and cross-platform messages (Yuval's DM)
 export TEAMS_POLLING_HOME_CHANNEL="19:862ec907-3e65-4c00-aa0c-02948656ae7f_aa2b5ee6-797a-4d95-9cf2-485c04f3958e@unq.gbl.spaces"
 
-# Load Teams credentials.
-# Under the B7-sandboxed unit (see 50-b7-readonly.conf), secrets/ is
-# InaccessiblePaths= and systemd delivers teams.env via LoadCredential=
-# ($CREDENTIALS_DIRECTORY). The direct path is kept as fallback so the bare
-# (rollback) unit still works.
+# Load Teams credentials — one chain, three delivery mechanisms:
+#   1. systemd B7 unit: secrets/ is InaccessiblePaths=, teams.env arrives via
+#      LoadCredential= ($CREDENTIALS_DIRECTORY)
+#   2. OpenShell sandbox: secrets/ is not mounted at all, teams.env arrives as
+#      a single-file ro bind whose path is passed in $TEAMS_ENV_FILE
+#   3. bare rollback unit: direct read from secrets/
 if [ -n "${CREDENTIALS_DIRECTORY:-}" ] && [ -r "${CREDENTIALS_DIRECTORY}/teams.env" ]; then
     set -a
     source "${CREDENTIALS_DIRECTORY}/teams.env"
+    set +a
+elif [ -n "${TEAMS_ENV_FILE:-}" ] && [ -r "${TEAMS_ENV_FILE}" ]; then
+    set -a
+    source "${TEAMS_ENV_FILE}"
     set +a
 elif [ -r /opt/qnoe-agent/secrets/teams.env ]; then
     set -a
