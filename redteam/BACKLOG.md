@@ -176,3 +176,14 @@ was in the test harness, not the agent. Standing regressions to keep: tool relia
   phrasings match; no false-fire on "run the analysis"/"rerun"/"overrun"). New probe
   `hook-runid-phrasing` guards it.
 - Re-verify: Teams re-ask → expect 49; harness `--class confabulation`.
+
+### R2 — temperature diagnosis + partial fix (2026-07-14)
+- Diagnosis (user asked "non-determinism or inaccessibility?"): NOT inaccessibility (qcodes_search
+  is resident, diag-tools confirms). It's non-determinism — the model was sampling at llama.cpp's
+  DEFAULT temp (~0.8): no `--temp` in start_llamacpp.sh, Hermes sends none, GGUF ignores HF
+  generation_config. High temp → run-to-run it rolled between tool / RAG-card / terminal.
+- Fix: `--temp 0.2 --top-p 0.9` in start_llamacpp.sh (global; net-positive determinism for a factual
+  assistant; reversible). 5× gate-sweep: **3/5 → 4/5 PASS (848)**.
+- Residual 1/5 = ARG-construction ("room-T" path substring absent from real paths → empty), not
+  sampling — prompt-unfixable. The deterministic latest-sweep hook (DEFERRED, user call) is the only
+  path to 100%. Keep temp 0.2; keep tool-last-gatesweep as the reliability meter.
