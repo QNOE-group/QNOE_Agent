@@ -307,7 +307,12 @@ class TeamsPollingAdapter(BasePlatformAdapter):
     # -- BasePlatformAdapter interface ---------------------------------------
 
     async def connect(self) -> bool:
-        self._session = aiohttp.ClientSession()
+        # trust_env: honor HTTP(S)_PROXY + SSL_CERT_FILE from the environment.
+        # Required inside the OpenShell sandbox (B7-OS), where ALL egress goes
+        # through an injected L7 proxy and there is no direct DNS — aiohttp
+        # defaults to trust_env=False and would fail with "Temporary failure in
+        # name resolution". No-op outside the sandbox (no proxy env set).
+        self._session = aiohttp.ClientSession(trust_env=True)
         self._init_msal()
         try:
             await self._bootstrap()
