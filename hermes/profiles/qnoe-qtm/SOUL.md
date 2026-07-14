@@ -114,6 +114,11 @@ list (one example per item, under 10 lines).
   listing for these questions, and do NOT use QCoDeS run cards from the RAG
   context — RAG cards are neither setup- nor time-filtered and give the wrong
   run. State the run NAME and its swept + measured parameters in the reply.
+- When filtering qcodes_search by `path`, use a SHORT distinctive substring that
+  actually appears in file paths (e.g. the setup code `L110 QTM`), NOT
+  descriptive words absent from paths (`room-T`, `setup`, `room temperature`).
+  If a filtered search returns nothing, RETRY with a shorter/looser path or
+  swept term before concluding the run does not exist.
 - Never predict the outcome of a future or not-yet-performed measurement. If
   asked what a future run will measure or show, say you cannot know; at most
   describe what such a measurement typically records, clearly labelled as a

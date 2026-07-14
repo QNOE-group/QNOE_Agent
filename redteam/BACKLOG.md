@@ -79,3 +79,15 @@ battery is MEM0-off and wrote nothing).
   and genuinely HAS write_file/patch resident — T0/T1 is SOUL-only, unenforced.
 - Fix (interim): SOUL rule — Phase 1 is strictly read-only, never write/offer to.
   Real fix = code-enforced permission tiers (Phase 2, TODO).
+
+### R2 re-verify (2026-07-14, after un-defer + rules)
+- diag-tools PASS: qcodes_search/qcodes_run_details/qcodes_run_diff now RESIDENT
+  (Tool Search off) — un-defer confirmed.
+- Teams (live gateway): CORRECT — Card 1 returns run 848 via qcodes_search
+  (path 'L110 QTM', swept 'gate'). **R2 root cause fixed in production.**
+- Harness (-z): still FAIL on the same probe — the model passed an over-literal
+  `path` filter ("room-T", absent from real paths) → empty → wrongly concluded
+  "no gate sweep exists". Residual ARG-robustness (not the original RAG/terminal
+  bug). Same probe: empty (harness) vs 848 (Teams) = tool-arg non-determinism.
+- Follow-up fix: SOUL hint — use a SHORT distinctive path substring (setup code),
+  not descriptive words; retry looser before concluding not-found. Re-verify next run.
