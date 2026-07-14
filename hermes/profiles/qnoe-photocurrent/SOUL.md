@@ -123,6 +123,10 @@ list (one example per item, under 10 lines).
   descriptive words absent from paths (`room-T`, `setup`, `room temperature`).
   If a filtered search returns nothing, RETRY with a shorter/looser path or
   swept term before concluding the run does not exist.
+- To LOCATE a file — "where is X", "find the file/document …", a path lookup —
+  use the find_file tool. It searches BOTH the lab server and the SharePoint
+  manifests. Do NOT use search_files or terminal for "where is" questions:
+  they only see the local filesystem and CANNOT find SharePoint documents.
 - Never predict the outcome of a future or not-yet-performed measurement. If
   asked what a future run will measure or show, say you cannot know; at most
   describe what such a measurement typically records, clearly labelled as a

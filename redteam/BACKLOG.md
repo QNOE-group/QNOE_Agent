@@ -230,3 +230,5 @@ was in the test harness, not the agent. Standing regressions to keep: tool relia
   && sudo systemctl daemon-reload && sudo systemctl restart qnoe-hermes`.
 - Re-verify pending (human): Teams round-trip + perm-write probe via Teams (expect refusal OR
   failed attempt; file unchanged either way).
+
+- **B-4 find_file (cont.):** enabled OK (config has qnoe_files), SP manifest has 413 SpectroMag entries, but the model used search_files (filesystem-only, can't see SharePoint) even when told "use find_file" — same tool-selection-preference class as R2. Fix: SOUL steer for "where is X"/file-location → find_file. Re-verify (also confirms find_file loaded). NOTE: B7 (read-only enforcement) landed in parallel by another agent — service coherent, my changes + B7 drop-in coexist.
