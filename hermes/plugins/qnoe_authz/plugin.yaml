@@ -1,0 +1,6 @@
+name: qnoe_authz
+description: "QNOE access control — polite refusal for non-allowlisted Teams users (pre_gateway_dispatch hook)"
+version: "0.1.0"
+author: "QNOE Lab"
+provides_hooks:
+  - pre_gateway_dispatch

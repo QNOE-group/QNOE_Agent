@@ -18,6 +18,7 @@ plugins:
   - qnoe_qcodes
   - teams_polling
   - qnoe_files
+  - qnoe_authz
 agent:
   max_turns: 90
   gateway_timeout: 1800
