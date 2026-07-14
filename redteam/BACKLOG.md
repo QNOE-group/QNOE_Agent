@@ -187,3 +187,16 @@ was in the test harness, not the agent. Standing regressions to keep: tool relia
 - Residual 1/5 = ARG-construction ("room-T" path substring absent from real paths → empty), not
   sampling — prompt-unfixable. The deterministic latest-sweep hook (DEFERRED, user call) is the only
   path to 100%. Keep temp 0.2; keep tool-last-gatesweep as the reliability meter.
+
+### R6 — memory guard OVERCORRECTED: recall miss on the user's own context (2026-07-14)
+- B-2 (Teams): stated "my main sample is gated graphene + 2-layer hBN barrier", /new, "what's my
+  main sample?" → agent did a directory listing (Tip8Sample11), did NOT recall the fact.
+- Diagnosis: plumbing WORKS — fact was stored (episodic_memory) and injected (recall turn
+  mem_facts=3). But the M47 poisoning guard ("memory is NOT a data source; for any measurement/run/
+  DEVICE fact use tools, never memory") made the model treat "my sample" as a lab/device fact →
+  went to tools → ignored the injected memory fact. Traded poisoning for a recall miss.
+- Fix: split the guard — memory IS authoritative for the USER'S OWN context (sample, plans,
+  preferences); NOT for objective lab records (specific run params, file contents, counts) → those
+  still use tools. Poisoning stays fixed (lab records still tool-sourced; new writes user-only; old
+  poison purged). Also: brief-acknowledgment nudge for "Remember: ..." statements (fixed the verbose
+  planning-dump the user noticed). Re-verify: B-2 recall + B-3 (lab fact still uses qcodes_search).
