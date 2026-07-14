@@ -1,5 +1,13 @@
 # B7 Handoff — Re-enable the OpenShell sandbox (read-only enforcement)
 
+> **✅ EXECUTED 2026-07-14 — mechanism #2 (systemd sandboxing) chosen and deployed.**
+> Drop-in `50-b7-readonly.conf` on `qnoe-hermes.service`; probe unit
+> `qnoe-b7-test.service` 19/19 PASS; gateway healthy. Both policy gaps closed in
+> `sandbox-policy.yaml`. See [[memory/decisions#D17]] +
+> [[memory/infrastructure]] §B7 for the living documentation; `redteam/BACKLOG.md`
+> R4-RESOLVED for verification caveats. Remaining human checks: Teams round-trip,
+> perm-write probe via Teams, Mem0 read+write, nightly cron next morning.
+
 *Written 2026-07-14. For a reviewing/implementing agent. Goal: make the QNOE Lab
 Agent physically unable to write to lab data + repos, because read-only is
 currently unenforced.*

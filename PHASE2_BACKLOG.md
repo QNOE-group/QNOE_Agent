@@ -392,6 +392,8 @@ get_run_metadata(
 ## B7 — Migrate back to NVIDIA OpenShell sandbox
 
 > **🔴 PROMOTED TO HIGH PRIORITY (2026-07-14):** red-team R4 proved the agent can write to lab files (read-only is SOUL-only, unenforced). Re-enabling this sandbox is the fix. See [[TODO]] + `redteam/BACKLOG.md` Round 2b. Gaps to close: add `/opt/qnoe-agent/repos` to the policy read_only list; add `localhost:8000` to the network policy.
+>
+> **✅ READ-ONLY ENFORCEMENT RESOLVED 2026-07-14 — via systemd, not OpenShell.** `qnoe-hermes.service` drop-in `50-b7-readonly.conf` (mount-namespace `ReadOnlyPaths`/`InaccessiblePaths`) now physically blocks all writes to repos / /ICFO / config and hides `secrets/`; verified by the `qnoe-b7-test.service` probe (19/19 PASS). Both policy gaps above were also closed in `sandbox-policy.yaml`. **What remains of B7 is only the OpenShell migration itself** — its added value over the systemd fix is network L7 inspection + credential scoping (needed for Phase 2 T2–T4), not read-only enforcement. Demoted back to normal priority.
 
 **What:** Phase 1 bypasses OpenShell and uses plain `docker run` because OpenShell v0.0.59 silently ignores user volume mounts (`--driver-config-json` Docker mounts are marked "Experimental" and not implemented for the Docker driver). Once NVIDIA ships a version that supports volume passthrough, migrate back to OpenShell for its network L7 inspection, credential scoping, and JWT-based sandbox auth.
 

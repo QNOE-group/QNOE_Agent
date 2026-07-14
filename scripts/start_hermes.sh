@@ -31,8 +31,16 @@ export GATEWAY_ALLOW_ALL_USERS=true
 # Home channel for cron job delivery and cross-platform messages (Yuval's DM)
 export TEAMS_POLLING_HOME_CHANNEL="19:862ec907-3e65-4c00-aa0c-02948656ae7f_aa2b5ee6-797a-4d95-9cf2-485c04f3958e@unq.gbl.spaces"
 
-# Load Teams credentials
-if [ -r /opt/qnoe-agent/secrets/teams.env ]; then
+# Load Teams credentials.
+# Under the B7-sandboxed unit (see 50-b7-readonly.conf), secrets/ is
+# InaccessiblePaths= and systemd delivers teams.env via LoadCredential=
+# ($CREDENTIALS_DIRECTORY). The direct path is kept as fallback so the bare
+# (rollback) unit still works.
+if [ -n "${CREDENTIALS_DIRECTORY:-}" ] && [ -r "${CREDENTIALS_DIRECTORY}/teams.env" ]; then
+    set -a
+    source "${CREDENTIALS_DIRECTORY}/teams.env"
+    set +a
+elif [ -r /opt/qnoe-agent/secrets/teams.env ]; then
     set -a
     source /opt/qnoe-agent/secrets/teams.env
     set +a

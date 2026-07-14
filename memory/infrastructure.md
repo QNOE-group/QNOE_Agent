@@ -1,5 +1,5 @@
 # Infrastructure
-*Last updated: 2026-07-06 (GitHub repo added)*
+*Last updated: 2026-07-14 (B7 systemd sandbox on qnoe-hermes)*
 
 > DGX hardware, services, networking, and system-level config.
 > Full setup guide: [[DGX_SETUP]] · Current state: [[SETUP_LOG]] · Deploy procedures: [[memory/deploy-patterns]]
@@ -44,7 +44,30 @@ Does NOT persist across reboots. Re-run after each restart. Prompts for ICFO pas
 | Inference | systemd `vllm.service` (unit name kept) | localhost:8000, **gpt-oss-120b MXFP4 via llama.cpp** since 2026-07-10 cutover — was Hermes 3 70B AWQ/vLLM. Runs `scripts/start_llamacpp.sh`. |
 | Qdrant | Docker container | port 6333, 8 collections, data at `/opt/qnoe-agent/qdrant_data/` |
 | Watcher | systemd `qnoe-watcher.service` | SMB3 file watcher, ~37K cached files |
-| Hermes Agent | systemd `qnoe-hermes.service` | Native (no Docker), Teams polling, per-user profile routing |
+| Hermes Agent | systemd `qnoe-hermes.service` | Native (no Docker), Teams polling, per-user profile routing. **Since 2026-07-14: runs under B7 read-only namespace** (see section below) |
+
+## B7 Read-Only Sandbox on qnoe-hermes (2026-07-14, [[memory/decisions#D17]])
+
+Red-team R4 proved read-only was SOUL-only (agent wrote a repo file 1/5 runs). Now OS-enforced via
+systemd mount namespace — drop-in `/etc/systemd/system/qnoe-hermes.service.d/50-b7-readonly.conf`
+(repo copy: `hermes/scripts/qnoe-hermes.service.d/`):
+
+- `ReadOnlyPaths=/opt/qnoe-agent /ICFO /home/yzamir` — binds `write_file`/`patch` and every `terminal` child.
+- `ReadWritePaths=/opt/qnoe-agent/memory /opt/qnoe-agent/logs /opt/qnoe-agent/hermes` (Mem0/SQLite, logs, session state). `/home/qnoe-ai` (`.mem0`, `.cache`) stays rw by default.
+- `InaccessiblePaths=/opt/qnoe-agent/secrets` + `LoadCredential=teams.env:...` — systemd (root, outside the namespace) delivers teams.env via `$CREDENTIALS_DIRECTORY`; `start_hermes.sh` sources it there, falling back to the direct path for bare/rollback runs.
+- `NoNewPrivileges` + `PrivateTmp` + `ProtectSystem=full`.
+
+**Verification:** standing unit `qnoe-b7-test.service` runs `scripts/b7_probe.sh` under the *same*
+directives (keep the two units in sync). `sudo systemctl start qnoe-b7-test` → 19 PASS lines in
+`logs/b7_probe.log`. 2026-07-14: 19/19.
+
+**Gotchas:** (1) red-team harness Channel A (`hermes -z`) runs OUTSIDE the unit → NOT sandboxed;
+enforcement checks go via Teams or the probe unit. (2) cron jobs (nightly re-index git-pulls
+`repos/`, SharePoint sync) run outside the unit → unaffected, still writable for them. (3) sqlite
+registry DBs are `journal_mode=delete`, so ro readers need no side files — do NOT switch them to WAL
+without revisiting the ro mounts. (4) Rollback: `sudo cp /dev/null .../50-b7-readonly.conf && sudo
+systemctl daemon-reload && sudo systemctl restart qnoe-hermes` (no sudo rm in NOPASSWD set).
+Backup of the pre-B7 launcher: `scripts/start_hermes.sh.bak-pre-b7` on the DGX.
 
 ## Key Paths on DGX
 

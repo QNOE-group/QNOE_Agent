@@ -1,5 +1,5 @@
 # HOME — Claude Code Memory Index
-*Last updated: 2026-07-10*
+*Last updated: 2026-07-14 (B7 systemd sandbox)*
 
 > **Purpose:** Persistent memory for Claude Code working on the QNOE Lab Agent project.
 > Start every session here. Follow links to topic files as needed.
@@ -59,3 +59,5 @@
 
 **Red-team loop (2026-07-14)** — built a repeatable adversarial harness (`redteam/`, findings in `redteam/BACKLOG.md`). Rounds 1-2 found+fixed: R1/R2 tool-selection (Tool Search now OFF → qcodes tools resident; `tool_use_enforcement` back true), **M47 mass Mem0 poisoning** (purged 40+ pre-fix confabulated facts), R3 calibration, R4 read-only. R2 residual (~60% "latest sweep" reliability, gpt-oss intermittency) DEFERRED. Injection/refusal/attribution/run-existence confirmed solid.
 Next: re-verify R3/R4, add fresh probe classes; Phase 2 ([[PHASE2_BACKLOG]] B8/B9/B10); PPTX Gantt before PI presentation.
+
+**B7 read-only enforcement DONE (2026-07-14)** — `qnoe-hermes.service` now runs under a systemd mount-namespace drop-in (`50-b7-readonly.conf`): repos//ICFO/config physically read-only for ALL tools, `secrets/` inaccessible (teams.env via `LoadCredential=`). Chosen over the OpenShell container ([[memory/decisions#D17]]); verified by standing probe `qnoe-b7-test.service` (19/19). Human checks pending: Teams round-trip + perm-write via Teams. Details: [[memory/infrastructure]] §B7.

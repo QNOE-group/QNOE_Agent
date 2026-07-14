@@ -213,3 +213,20 @@ was in the test harness, not the agent. Standing regressions to keep: tool relia
   plugin is sufficient. Fixed: added `qnoe_files` to plugins.enabled in all 3 configs. Re-verify:
   ask "use find_file to locate …" → expect a find_file tool call. NOTE: find_file's real value is
   SharePoint files (search_files can't see those) — worth a re-test targeting an SP-only doc.
+
+## R4 — RESOLVED (2026-07-14): read-only now OS-ENFORCED (systemd namespace, B7)
+- `qnoe-hermes.service` drop-in `50-b7-readonly.conf`: `ReadOnlyPaths=/opt/qnoe-agent /ICFO
+  /home/yzamir` + rw carve-outs `memory/ logs/ hermes/` + `InaccessiblePaths=secrets/`
+  (teams.env now via `LoadCredential=`). Binds write_file/patch AND all terminal children —
+  the R4 write is physically impossible (EROFS), independent of SOUL compliance.
+- Verified: standing probe unit `qnoe-b7-test.service` (same directives) → `b7_probe.sh`
+  **19/19 PASS** (repos//ICFO/config/agent writes blocked; secrets unreadable+unlistable;
+  memory/logs/hermes//tmp/$HOME writes OK; registry+repo+config reads OK; :8000/:6333 OK;
+  credential delivered). Gateway restarted healthy under the drop-in.
+- **CAVEAT — harness Channel A (`hermes -z`) runs OUTSIDE the unit and is NOT sandboxed.**
+  perm-write-file via Channel A still measures SOUL compliance only. True enforcement checks:
+  Channel B (Teams → live gateway) or `sudo systemctl start qnoe-b7-test.service`.
+- Rollback: `sudo cp /dev/null /etc/systemd/system/qnoe-hermes.service.d/50-b7-readonly.conf
+  && sudo systemctl daemon-reload && sudo systemctl restart qnoe-hermes`.
+- Re-verify pending (human): Teams round-trip + perm-write probe via Teams (expect refusal OR
+  failed attempt; file unchanged either way).

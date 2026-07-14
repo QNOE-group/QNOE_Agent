@@ -7,6 +7,7 @@
       - /opt/qnoe-agent/secrets
       - /opt/qnoe-agent/venv
       - /opt/qnoe-agent/agent
+      - /opt/qnoe-agent/repos      # B7 gap: R4 write target — RAG/qcodes read these, never write
       - /ICFO/groups/NOE
       - /ICFO/smbhome/yzamir
     read_write:
@@ -23,6 +24,18 @@
     run_as_group: sandbox
 
   network_policies:
+    llm:
+      name: llamacpp-local
+      endpoints:
+        - host: localhost
+          port: 8000
+          protocol: rest
+          enforcement: enforce
+          access: read-write
+      binaries:
+        - path: /opt/qnoe-agent/venv/bin/python
+        - path: /opt/qnoe-agent/hermes-venv/bin/python3
+
     qdrant:
       name: qdrant-local
       endpoints:
