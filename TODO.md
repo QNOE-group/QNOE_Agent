@@ -20,6 +20,8 @@
 
 ## Open verifications & near-term items (2026-07-10, post-cutover)
 
+- [ ] **⚠ Read-only NOT enforced — ELEVATED (2026-07-14, red-team R4).** The agent performed a REAL unauthorized write (`# reviewed by agent` → `repos/QTM-CodeBase/README.md`, reverted) in 1/5 red-team runs. T0/T1 read-only is SOUL-instruction-only; `write_file`/`patch`/`terminal` are resident and the model occasionally uses them. Data-integrity issue, not just a wrong answer. Decide: (a) accept for MVP (trusted users + allowlist), or (b) strip write vectors / add the Phase-2 code-enforced permission-tier + sandbox layer (was already Phase 2; this makes it near-term). See `redteam/BACKLOG.md` Round 2b.
+
 - [x] **MVP-1 DECLARED (2026-07-10)** ✅ — all rescoped criteria pass; evidence table in [[SETUP_LOG]]. Verification round found+fixed M44 (registry perms), M45 (Mem0 anon-uid), M46 (memory poisoning). Ride-alongs below remain.
 
 - [ ] **Re-ask run 159** through the agent — expect **49** databases (was 35 before the M44 permission fix) with `/ICFO/...` paths in the sample.
