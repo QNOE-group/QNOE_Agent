@@ -650,9 +650,16 @@ class QnoeRagProvider(MemoryProvider):
             self._prefetch_result = ""
 
         if not result:
-            # No prefetch available — do synchronous retrieval
-            chunks = _run_retrieve(query, self._collections)
-            result = _format_chunks(chunks)
+            # No prefetch available — do synchronous retrieval. Guarded: a RAG
+            # failure (e.g. embedding model unavailable) must NOT crash prefetch,
+            # or it takes the Mem0/qcodes/find_file hooks down with it (observed
+            # 2026-07-14 when B7's PrivateTmp hid the fastembed BM25 cache).
+            try:
+                chunks = _run_retrieve(query, self._collections)
+                result = _format_chunks(chunks)
+            except Exception as e:
+                logger.warning("RAG retrieve failed (degrading to empty RAG): %s", e)
+                result = ""
 
         rag_block = f"## RAG Context\n{result}" if result else ""
 
