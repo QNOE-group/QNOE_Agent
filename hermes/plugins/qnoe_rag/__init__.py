@@ -418,6 +418,116 @@ def _qcodes_registry_block(message: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Deterministic file-location hook (find_file)
+# ---------------------------------------------------------------------------
+# The model reliably prefers Hermes's local `search_files` over our `find_file`
+# for "where is X" questions, so it never reaches SharePoint (which is not on the
+# filesystem, only in the manifest index). This hook runs our find_file search in
+# code and injects the results, exactly like the run-id registry block — so the
+# answer (incl. SharePoint web links) is in context regardless of tool choice.
+
+_FIND_INTENT_RE = re.compile(
+    r"\b(find|locate|where\s+(?:is|are|can|to)|search\s+for|look\s+for|"
+    r"path\s+to|which\s+(?:file|doc|document|notebook))\b",
+    re.IGNORECASE,
+)
+_FILE_NOUN_RE = re.compile(
+    r"\b(files?|documents?|docs?|notebooks?|scripts?|papers?|manuals?|reports?|"
+    r"presentations?|slides?|readme|spreadsheets?|"
+    r"\.(?:py|ipynb|docx?|pdf|pptx?|xlsx?|md|db|ya?ml|txt|csv|json|h5))\b",
+    re.IGNORECASE,
+)
+_FIND_STOP = {
+    "the", "a", "an", "of", "about", "for", "on", "in", "to", "setup", "document",
+    "file", "find", "locate", "where", "is", "are", "can", "which", "notebook",
+    "script", "paper", "please", "me", "give", "and", "that", "contains",
+    "containing", "named", "called", "any", "our", "group", "lab", "with",
+    "sharepoint", "cifs", "server", "use", "find_file", "locate", "search",
+}
+
+
+@lru_cache(maxsize=1)
+def _files_mod():
+    """Load the sibling qnoe_files plugin (stdlib-only) to reuse its search."""
+    import importlib.util
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "qnoe_files", "__init__.py",
+    )
+    spec = importlib.util.spec_from_file_location("qnoe_files_hook", path)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def _extract_terms(message: str) -> list:
+    q = re.findall(r'["“‘\']([^"”’\']{2,60})["”’\']', message)
+    if q:
+        return [t.strip() for t in q[:2]]
+    terms = re.findall(
+        r'\b([\w.-]+\.(?:py|ipynb|docx?|pdf|pptx?|xlsx?|md|db|ya?ml|txt|csv|json|h5))\b',
+        message, re.IGNORECASE,
+    )
+    # distinctive codes / CamelCase / ALLCAPS / alphanumeric device IDs
+    terms += re.findall(r'\b([A-Za-z]*\d[\w-]*|[A-Z][a-z]+[A-Z]\w*|[A-Z]{2,}\w*)\b', message)
+    out = []
+    for t in terms:
+        if t.lower() in _FIND_STOP or len(t) < 3:
+            continue
+        if t not in out:
+            out.append(t)
+    return out[:2]
+
+
+def _find_file_block(message: str) -> str:
+    if not message or not (_FIND_INTENT_RE.search(message) and _FILE_NOUN_RE.search(message)):
+        return ""
+    terms = _extract_terms(message)
+    if not terms:
+        return ""
+    try:
+        fm = _files_mod()
+    except Exception as exc:
+        logger.warning("find_file hook: module load failed: %s", exc)
+        return ""
+    results = []
+    for term in terms:
+        try:
+            results.extend(fm._search_sharepoint(term, 8))
+            results.extend(fm._search_cifs(term, 8))
+        except Exception as exc:
+            logger.warning("find_file hook: search failed for %r: %s", term, exc)
+    seen, uniq = set(), []
+    for r in results:
+        link = r.get("link", "")
+        if link and link not in seen:
+            seen.add(link)
+            uniq.append(r)
+    label = " / ".join(terms)
+    if not uniq:
+        return (
+            f"## File-location lookup (authoritative — find_file index, covers "
+            f"SharePoint) for '{label}': no indexed file matches. Tell the user no "
+            f"indexed file matches that name; do NOT claim SharePoint is "
+            f"inaccessible.\n\n"
+        )
+    sp = [r for r in uniq if r["source"] == "sharepoint"]
+    cifs = [r for r in uniq if r["source"] == "cifs"]
+    out = [
+        f"## File-location lookup (authoritative — find_file index, covers "
+        f"SharePoint) for '{label}':",
+        "Report these to the user; SharePoint web links are valid even though "
+        "SharePoint is not on the filesystem.",
+    ]
+    for r in (sp + cifs)[:10]:
+        tag = "SharePoint" if r["source"] == "sharepoint" else "CIFS"
+        out.append(f"- [{tag}] {r['link']}")
+    if len(uniq) > 10:
+        out.append(f"- …and {len(uniq) - 10} more — ask the user to narrow.")
+    return "\n".join(out) + "\n\n"
+
+
+# ---------------------------------------------------------------------------
 # Tool schemas
 # ---------------------------------------------------------------------------
 
@@ -554,6 +664,13 @@ class QnoeRagProvider(MemoryProvider):
         except Exception as e:
             logger.warning("QCoDeS registry hook failed: %s", e)
 
+        # Deterministic file-location hook (find_file index, covers SharePoint).
+        findfile_block = ""
+        try:
+            findfile_block = _find_file_block(query)
+        except Exception as e:
+            logger.warning("find_file hook failed: %s", e)
+
         # Per-user Mem0 facts, injected ahead of RAG. Must never break a turn.
         mem_block = ""
         if MEM0_ENABLED:
@@ -570,15 +687,16 @@ class QnoeRagProvider(MemoryProvider):
         # Per-turn injection observability (added 2026-07-10 after a live turn
         # denied knowledge of a fact that ranked #1 in offline Mem0 search).
         logger.info(
-            "prefetch inject: mem_facts=%d qcodes_block=%s rag_chars=%d session=%s query=%r",
+            "prefetch inject: mem_facts=%d qcodes_block=%s findfile_block=%s rag_chars=%d session=%s query=%r",
             mem_block.count("\n- ") + (1 if mem_block.startswith("- ") else 0),
             bool(qcodes_block),
+            bool(findfile_block),
             len(rag_block),
             session_id,
             (query or "")[:80],
         )
 
-        return (mem_block + qcodes_block + rag_block) or ""
+        return (mem_block + qcodes_block + findfile_block + rag_block) or ""
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         def _run():
