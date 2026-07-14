@@ -244,3 +244,17 @@ was in the test harness, not the agent. Standing regressions to keep: tool relia
   `ReadOnlyPaths=` (both units) + probe check. Probe now **20/20 PASS**; gateway healthy.
 - Lesson (allowlist drift): any new host mount or qnoe-ai-writable path is writable in the sandbox
   by default. When adding a mount, update `50-b7-readonly.conf` + `qnoe-b7-test.service` + probe.
+
+### R9 — B7 read-only enforcement broke RAG (fastembed BM25 cache) → crashed ALL prefetch hooks (2026-07-14)
+- Symptom: SpectroMag find_file re-test failed AND no `prefetch inject` lines after B7 landed. Log:
+  "RAG prefetch failed: Could not load model Qdrant/bm25 from any source" (since 15:20, post-B7).
+- Root cause: BM25 model was cached in `/tmp/fastembed_cache`; B7's `PrivateTmp=yes` gives the
+  service a private empty /tmp → cache invisible → fastembed load throws. Worse, `prefetch()`'s
+  synchronous `_run_retrieve` was UNGUARDED, so the RAG exception crashed the whole prefetch —
+  taking Mem0, the qcodes hook, and the new find_file hook down with it. So SpectroMag never even
+  reached the find_file hook; RAG was down in production for ~1h.
+- Fixes: (1) copied the BM25 cache to `/opt/qnoe-agent/memory/fastembed_cache` (in-namespace,
+  read-write) + `FASTEMBED_CACHE_PATH` env in start_hermes.sh (verified fastembed loads it);
+  (2) guarded the sync `_run_retrieve` in prefetch — a RAG failure now degrades to empty RAG,
+  hooks still run. **B7 follow-up:** the sandbox policy must keep the fastembed cache path in the
+  writable set (now under memory/, so covered) — flag for the B7 owner.
