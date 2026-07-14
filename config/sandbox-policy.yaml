@@ -17,7 +17,16 @@
   version: 1
 
   filesystem_policy:
+    # OpenShell forces its workspace (/sandbox) as the process cwd; without
+    # this, landlock denies cwd access and anything resolving relative paths
+    # dies with EACCES — found live as "RAG prefetch failed: Permission
+    # denied: '/sandbox'" (agent then answered without RAG).
+    include_workdir: true
     read_only:
+      - /opt/qnoe-agent            # the top dir itself (container cwd) — landlock denies even
+                                   # traversal/grep of it when only subdirs are listed; in-container
+                                   # the subtree is just the mounted subdirs below + empty image dir.
+                                   # secrets/ stays invisible (never mounted); rw entries below win.
       - /opt/qnoe-agent/models
       - /opt/qnoe-agent/config
       - /opt/qnoe-agent/scripts     # entry script + b7_probe must exist in-container

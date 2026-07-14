@@ -4,6 +4,15 @@ set -e
 # QNOE Lab Agent — Hermes Gateway launcher
 # Runs as qnoe-ai user via systemd (no Docker needed)
 
+# OpenShell forces HOME=/sandbox (its workspace convention) on sandboxed
+# processes, overriding /etc/passwd. Our persistent state binds live under the
+# real home — restore it so ~/.mem0 and ~/.cache resolve to the mounted dirs
+# (found live: "RAG prefetch failed: Permission denied: '/sandbox'" — Mem0
+# tried to mkdir /sandbox/...).
+if [ "${OPENSHELL_SANDBOX:-}" = "1" ]; then
+    export HOME=/home/qnoe-ai
+fi
+
 # Hermes home — profiles, plugins, config, memory
 export HERMES_HOME=/opt/qnoe-agent/hermes
 # BM25 sparse-model cache — must live under a persistent rw path, NOT /tmp
