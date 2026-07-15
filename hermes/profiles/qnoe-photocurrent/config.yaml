@@ -59,10 +59,14 @@ sessions:
 security:
   allow_private_urls: true
   redact_secrets: true
-gateway:
-  platforms:
-    teams_polling:
-      enabled: false
+# No gateway.platforms poller here. Only the ACTIVE profile (qnoe-orchestrator)
+# runs the single teams_polling poller; it stamps SessionSource.profile per user
+# (teams_polling plugin) and multiplex routes the turn to this profile. The old
+# `platforms: teams_polling: enabled: false` block was dead/misleading (implied a
+# per-profile poller) — removed 2026-07-15. NOTE: Hermes still logs a harmless
+# "refusing to start the duplicate" for each secondary profile because the
+# teams_polling plugin is loaded per-profile under one shared bot credential;
+# only the active poller starts and routing is unaffected.
 memory:
   user_profile_enabled: false
   provider: qnoe_rag
