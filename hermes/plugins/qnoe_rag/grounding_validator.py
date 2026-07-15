@@ -28,7 +28,10 @@ import os
 import re
 import sqlite3
 
-logger = logging.getLogger(__name__)
+# Log under qnoe_rag's captured namespace — a bare module-name logger (this
+# module is loaded via importlib) does not propagate to the gateway's captured
+# handlers, so the per-turn verdict line would be invisible.
+logger = logging.getLogger("_hermes_user_memory.qnoe_rag.grounding")
 
 
 def _enabled() -> bool:
