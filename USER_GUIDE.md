@@ -76,6 +76,24 @@ shouldn't exist, treat it with suspicion and tell the maintainer.
 
 ---
 
+## Core papers — the agent knows your team's foundational work
+
+Each sub-team has a **core-papers folder** for its flagship publications. QTM's is
+set up (starting with Inbar et al., *Nature* 2023). Drop a key paper's PDF in and
+the agent ingests it automatically — no setup, nothing leaves the lab network.
+
+Why it's worth doing:
+
+- **Grounded, citable answers** on your team's central concepts — the agent quotes
+  and points to the actual paper instead of relying on general knowledge.
+- **Nothing gets missed** — foundational ideas are always available to the agent,
+  not dependent on whether a stray mention happens to surface in search.
+- **Shared context** — anyone on the team gets the same well-grounded answer.
+
+Ask the maintainer to add a paper you think the agent should always know.
+
+---
+
 *Questions or something behaving oddly? Note the exact message you sent and the
 reply, and pass it to the maintainer — that's exactly how issues get found and
 fixed.*
