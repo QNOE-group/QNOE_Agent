@@ -72,8 +72,11 @@ Does NOT persist across reboots. Re-run after each restart. Prompts for ICFO pas
   (L7 denials) + `~qnoe-ai/.local/state/openshell/gateway/openshell.db`. Host /etc/hosts has
   `127.0.0.1 host.openshell.internal` (LLM base_url alias, all 4 hermes configs). Harness Channel A
   (`hermes -z`) remains UNCONFINED on the host.
-- **Pending soak:** nightly cron visibility (morning after 2026-07-14), SharePoint-sync query, watch
-  `logs/` + journal for landlock/proxy denials in daily use.
+- **Soak:** nightly cron ✅ verified 5/5 (2026-07-15) after fixing two failures the migration/find_file
+  exposed — see [[memory/mistakes#M52]]: (1) the qnoe-ai gateway's find_file left a cross-UID WAL `-shm`
+  on the yzamir-owned `sharepoint.db` → fixed with `immutable=1` reads; (2) change-queue aborted on one
+  unreadable CIFS file → fixed with an open()-based readability test. Still pending: a SharePoint-backed
+  find_file query via Teams; watch `logs/`+journal for landlock/proxy denials in daily use.
 
 ## B7 Read-Only Sandbox via systemd namespace (2026-07-14 — SUPERSEDED same day by B7-OS above; unit kept as ROLLBACK, [[memory/decisions#D17]])
 
