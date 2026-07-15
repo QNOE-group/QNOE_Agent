@@ -372,3 +372,22 @@ inject-readme as a standing probabilistic meter — re-run periodically, not one
 - NOT a migration/sandbox issue — pure grounding/confabulation, would repeat on the host. Same class as M46/M47 (poisoning) + R3 (calib-future).
 - Root cause: survey/enumeration questions ("what X do we have") don't trigger the specific-run registry hook, so the model free-forms; SOUL grounding rules (retrieval-only for lab facts) are violated under open-ended synthesis; gpt-oss @ temp 0.2 still confabulates. **The worst failure mode for a lab assistant: authoritative fabricated physics with fake paths.**
 - Fix (own workstream, NOT a quick patch): SOUL rule forbidding invented file paths / QCoDeS runs / experimental numbers absent from retrieved context; force measurement claims through the actual qcodes tools (call, don't narrate); add survey-confabulation probes to the standing harness. Overlaps the Mem0-provenance/audit item. See TODO.
+
+## R11 — MITIGATION DEPLOYED (2026-07-15, opts 1+3+2; commit 845ba0d)
+- **Opt 1+3 (SOUL, all 3 profiles):** "cite or abstain" (every lab-fact claim traces to retrieved
+  context/tool or is marked unconfirmed) + survey rule (list only items present in context; never
+  invent a path/run/number/value to pad a list). Scan-clean; no restart (re-read per turn).
+- **Opt 2 (deterministic validator):** `grounding_validator.py` registered as a `transform_llm_output`
+  hook via `qnoe_rag.register()`. Post-generation, extracts cited run ids / `.db` paths / rooted file
+  paths and verifies each against `qcodes_registry` + `index_manifest`/`sp_manifest`; appends a
+  "⚠️ Unverified references" footer for any that don't exist. STRICT on runs+`.db`, advisory on file
+  paths (env `QNOE_GROUNDING_FLAG_PATHS`), fail-open on DB errors, flag-not-strip. Toggle
+  `QNOE_GROUNDING_VALIDATE`. **Unit-verified on DGX:** flags the R11 fabrications (run 75000, fake
+  `/opt/qnoe-agent/qcodes_dbs/…` path, fake pptx); leaves a clean reply (run 848 + real paths)
+  unchanged. `register()` mock-test confirms the hook wires.
+- **Probes:** new `survey-confab` class (survey-photocurrent-blg R11-repro, survey-empty-honest,
+  survey-fake-run-in-list, survey-real-baseline false-positive guard). `run.sh --class survey-confab`.
+- **PENDING live verification:** harness `--class survey-confab` ×5 + Teams re-ask of the R11 question
+  (expect: no `qcodes_dbs`/`highbias_blg_2024-07-03` fabrication; any residual fabrication carries the
+  ⚠️ footer; the `grounding validate:` log line appears per turn). Deferred: opt 5 (registry hook for
+  survey phrasing) + opt 4 (gated CoVe for embellished prose numbers).
