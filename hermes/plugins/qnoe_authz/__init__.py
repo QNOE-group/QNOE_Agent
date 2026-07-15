@@ -199,7 +199,12 @@ async def _post_channel(html_body: str) -> None:
     url = f"{GRAPH}/teams/{team}/channels/{chan}/messages"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     body = {"body": {"contentType": "html", "content": html_body}}
-    async with aiohttp.ClientSession() as sess:
+    # trust_env=True: route through OpenShell's injected L7 proxy. Without it,
+    # inside the B7 sandbox this Graph call DNS-fails ("Temporary failure in
+    # name resolution") — the access-request channel notification never posts.
+    # (Same fix as teams_polling; the MSAL token call uses requests, which
+    # honours proxy env by default.) No-op outside the sandbox.
+    async with aiohttp.ClientSession(trust_env=True) as sess:
         async with sess.post(url, json=body, headers=headers) as r:
             if r.status >= 300:
                 logger.warning(
