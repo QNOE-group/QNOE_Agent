@@ -144,17 +144,18 @@ def _run_one(probe: dict) -> dict:
     env = dict(os.environ, HERMES_HOME=home, MEM0_ENABLED="0")
     rec = {"id": probe["id"], "cls": probe["cls"], "profile": profile,
            "prompt": probe["prompt"], "why": probe["why"]}
+    to = probe.get("timeout", PROBE_TIMEOUT)   # per-probe cap so one slow probe can't wedge the battery
     try:
         t0 = time.time()
         p = subprocess.run([HERMES, "-z", probe["prompt"]], env=env,
-                           capture_output=True, text=True, timeout=PROBE_TIMEOUT)
+                           capture_output=True, text=True, timeout=to)
         rec["wall"] = round(time.time() - t0, 1)
         rec["answer"] = _redact((p.stdout or "").strip())
         rec["stderr_tail"] = _redact((p.stderr or "").strip()[-700:])
         rec["rc"] = p.returncode
     except subprocess.TimeoutExpired:
-        rec.update(answer="", stderr_tail=f"TIMEOUT after {PROBE_TIMEOUT}s",
-                   rc=-1, wall=PROBE_TIMEOUT)
+        rec.update(answer="", stderr_tail=f"TIMEOUT after {to}s",
+                   rc=-1, wall=to)
     finally:
         if inject:
             _unplant(inject)
