@@ -229,6 +229,75 @@ class TeamsPollingAdapter(BasePlatformAdapter):
         except (ValueError, TypeError):
             return False
 
+    # -- Per-user profile routing (user_profiles.yaml) -----------------------
+    # Restored + COMMITTED 2026-07-15. Maps each Teams user -> a Hermes profile
+    # and stamps SessionSource.profile so the multiplexing gateway routes the
+    # turn to that profile's SOUL / collections / secret-scope. Was a live-only
+    # hotfix that got clobbered on a plugin redeploy -> everyone fell back to the
+    # active (orchestrator) profile. Now in the repo so it survives redeploys.
+
+    def _user_profiles_path(self):
+        from pathlib import Path
+        cands = []
+        env = os.environ.get("QNOE_USER_PROFILES")
+        if env:
+            cands.append(Path(env))
+        hh = os.environ.get("HERMES_HOME", "")
+        if hh:
+            p = Path(hh)
+            # HERMES_HOME is the ACTIVE PROFILE dir (.../hermes/profiles/<name>);
+            # the map lives at the hermes-root config/, NOT the profile's config/
+            # (the old hotfix's bug — it only checked the profile dir).
+            if "profiles" in p.parts:
+                root = Path(*p.parts[: p.parts.index("profiles")])
+            else:
+                root = p
+            cands.append(root / "config" / "user_profiles.yaml")
+            cands.append(p / "config" / "user_profiles.yaml")  # legacy path
+        cands.append(Path("/opt/qnoe-agent/hermes/config/user_profiles.yaml"))
+        for c in cands:
+            try:
+                if c.is_file():
+                    return c
+            except Exception:
+                continue
+        return None
+
+    def _resolve_profile(self, user_id, user_name):
+        """Hermes profile for a Teams user (by ID, then name, then default), or
+        None to use the active profile. Cached with mtime-based reload so edits
+        to user_profiles.yaml apply without a gateway restart."""
+        try:
+            if not hasattr(self, "_up_mtime"):
+                self._up_path = self._user_profiles_path()
+                self._up_mtime = None
+                self._up_by_id, self._up_by_name, self._up_default = {}, {}, None
+                if self._up_path is None:
+                    logger.info("Teams: no user_profiles.yaml — all users route to the active profile")
+            if self._up_path is None:
+                return None
+            mtime = self._up_path.stat().st_mtime
+            if mtime != self._up_mtime:
+                import yaml
+                data = yaml.safe_load(self._up_path.read_text(encoding="utf-8")) or {}
+                self._up_by_id = data.get("users") or {}
+                self._up_by_name = data.get("users_by_name") or {}
+                self._up_default = data.get("default")
+                self._up_mtime = mtime
+                logger.info(
+                    "Teams: user-profile mapping loaded (%d by ID, %d by name, default=%s) from %s",
+                    len(self._up_by_id), len(self._up_by_name), self._up_default, self._up_path,
+                )
+            prof = (self._up_by_id.get(user_id)
+                    or (self._up_by_name.get(user_name) if user_name else None)
+                    or self._up_default)
+            if prof:
+                logger.info("Teams: %s (%s) -> profile %s", user_name, user_id, prof)
+            return prof
+        except Exception as exc:
+            logger.warning("Teams: user_profiles routing failed (%s) — active profile", exc)
+            return None
+
     # -- Polling -------------------------------------------------------------
 
     def _msg_to_event(self, msg: dict, chat_id: str) -> MessageEvent | None:
@@ -258,6 +327,7 @@ class TeamsPollingAdapter(BasePlatformAdapter):
             user_id=sender_id,
             user_name=sender.get("displayName"),
             message_id=msg_id,
+            profile=self._resolve_profile(sender_id, sender.get("displayName")),
         )
 
         # MessageEvent is a dataclass whose first field `text` is required —
