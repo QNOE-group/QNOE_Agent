@@ -21,6 +21,10 @@ export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export PYTHONPATH=/opt/qnoe-agent
 export EXCLUDE_EXTENSIONS="${EXCLUDE_EXTENSIONS:-.txt}"   # skip raw-measurement .txt (user decision 2026-07-16); override with EXCLUDE_EXTENSIONS="" to include
+# Notebook stays /ICFO-scoped: its 77 ACL-locked per-person subfolders are
+# deliberately private and must NOT be recovered via the broad /mnt/noe mount
+# (user decision 2026-07-16). The /ICFO nightly still indexes Notebook's open part.
+export EXCLUDE_FOLDERS="${EXCLUDE_FOLDERS:-Notebook}"
 
 WORKERS="${1:-12}"
 shift || true

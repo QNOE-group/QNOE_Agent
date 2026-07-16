@@ -17,6 +17,7 @@ Read via `/mnt/noe`, **store canonical `/ICFO/groups/NOE` paths** (so already-in
 **EXCLUDE (per your decision):** `Fabrication`, `Personal`; plus junk/archive `Data Backup`, `ai_agent`, `Pictures`, `Rendering Files`, `National Instruments Downloads`, `.obsidian`, `Obsidian`, `.TemporaryItems`. Per-file junk (`venv`, `__pycache__`, `.ipynb_checkpoints`, `Personal/Sergi/QTM - Copy`) pruned by `watcher.yaml`.
 **`.txt` — DECIDED 2026-07-16: EXCLUDE** (raw-measurement noise). Launcher defaults `EXCLUDE_EXTENSIONS=.txt`; override with `EXCLUDE_EXTENSIONS=""` to include.
 **Fabrication — DECIDED 2026-07-16: leave as-is.** It's excluded from this scan (allowlist), and the pre-existing `/ICFO/…/Fabrication/…` manifest rows (indexed when that ACL was open) are NOT purged.
+**Notebook — DECIDED 2026-07-16: EXCLUDE from the `/mnt/noe` scan** (`EXCLUDE_FOLDERS=Notebook` in the launcher). Of its 110 `/ICFO`-denied subfolders, only 33 are config-excludes; the other 77 are per-person ACL-locked notebooks — deliberately private, must not be pulled in via the broad `sberlanga` mount. Notebook stays on the `/ICFO` nightly (its open part is already indexed). **NB for the future nightly→`/mnt/noe` switch:** Notebook must keep its `/ICFO` scoping there too (mixed-mount) — do NOT let a `/mnt/noe` nightly index it.
 
 ## What was changed (staged in the repo + deployed to DGX)
 1. **`agent/ingest/run_ingest.py`**

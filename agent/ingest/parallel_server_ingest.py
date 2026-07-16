@@ -54,8 +54,17 @@ def build_file_list(refresh: bool) -> list[Path]:
         logger.info("Reusing cached find-manifest: %d files (%s). Use --refresh-find to rescan.",
                     len(files), FIND_CACHE)
         return files
+    # EXCLUDE_FOLDERS (comma-sep) drops top-levels from THIS /mnt/noe scan while
+    # leaving them in SERVER_FOLDERS (so the /ICFO nightly still covers them).
+    # Default use: EXCLUDE_FOLDERS=Notebook — its ACL-locked per-person subfolders
+    # are deliberately private and must NOT be pulled in via the broad sberlanga
+    # mount (user decision 2026-07-16); Notebook stays /ICFO-scoped.
+    excluded = {f.strip() for f in os.environ.get("EXCLUDE_FOLDERS", "").split(",") if f.strip()}
+    folders = [f for f in SERVER_FOLDERS if f not in excluded]
+    if excluded:
+        logger.info("EXCLUDE_FOLDERS (skipped in this /mnt/noe scan): %s", sorted(excluded))
     all_files: list[Path] = []
-    for folder in SERVER_FOLDERS:
+    for folder in folders:
         fp = SERVER_ROOT / folder
         if not fp.exists():
             logger.warning("Folder not present, skipping: %s", fp)
