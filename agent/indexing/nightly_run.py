@@ -58,6 +58,7 @@ TASK_TIMEOUTS = {
     "task_sync_sharepoint":       5 * 3600,  #  5 h
     "task_process_change_queue":  1 * 3600,  #  1 h
     "task_orphan_cleanup":        10 * 60,   # 10 min
+    "task_context_blocks":        5 * 60,    #  5 min (pure file reads)
 }
 _DEFAULT_TASK_TIMEOUT = 3600  # 1 h for any unlisted task
 
@@ -431,12 +432,106 @@ def task_orphan_cleanup() -> dict:
     return result
 
 
+def task_context_blocks() -> dict:
+    """Surface threat-scanner context drops (mistakes M53 lineage).
+
+    Read-only consumer of the three files the hourly qnoe-context-tally job
+    (scripts/context_block_tally.py, runs as qnoe-ai) writes into LOGS_DIR:
+    context_blocks.jsonl (block events parsed from the profile agent.logs),
+    soul_health.json (fresh static scan) and context_block_tally.state.json.
+    Raises only when BOTH data sources are missing — that means the monitor
+    itself is down, which must show as a FAILED task, never as "clean".
+    """
+    events_path = LOGS_DIR / "context_blocks.jsonl"
+    health_path = LOGS_DIR / "soul_health.json"
+    state_path = LOGS_DIR / "context_block_tally.state.json"
+    window_hours = 24
+    stale_after_hours = 3
+    now = datetime.now()
+
+    stats: dict = {"window_hours": window_hours, "events": 0, "anomalies": 0,
+                   "by_target": {}, "kinds": {}, "static_scan": {},
+                   "tally_last_run": None, "tally_stale": True}
+
+    # Tally freshness — a dead timer must never read as "no blocks".
+    try:
+        state = json.loads(state_path.read_text())
+        last_run = state.get("last_run")
+        stats["tally_last_run"] = last_run
+        if last_run:
+            age_h = (now - datetime.fromisoformat(last_run)).total_seconds() / 3600
+            stats["tally_stale"] = age_h > stale_after_hours
+    except (OSError, ValueError):
+        pass
+    if stats["tally_stale"]:
+        logger.warning("context-block tally is stale or missing (last_run=%s) — "
+                       "check qnoe-context-tally.timer", stats["tally_last_run"])
+
+    # Block events, last 24h (ISO strings compare lexicographically).
+    events_ok = False
+    cutoff = (now - timedelta(hours=window_hours)).isoformat(timespec="seconds")
+    try:
+        with open(events_path, encoding="utf-8") as fh:
+            events_ok = True
+            for line in fh:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue  # tolerate a partial trailing line
+                if (ev.get("ts") or ev.get("ingested_at") or "") < cutoff:
+                    continue
+                kind = ev.get("kind", "unknown")
+                stats["kinds"][kind] = stats["kinds"].get(kind, 0) + 1
+                if kind == "anomaly":
+                    stats["anomalies"] += 1
+                    continue
+                stats["events"] += 1
+                target = f"{ev.get('profile', '?')}/{ev.get('file', '?')}"
+                per_pattern = stats["by_target"].setdefault(target, {})
+                for p in ev.get("patterns") or ["?"]:
+                    per_pattern[p] = per_pattern.get(p, 0) + 1
+    except OSError as e:
+        logger.warning("context_blocks.jsonl unreadable: %s", e)
+
+    # Static scan state (written fresh each tally run; startup also writes it).
+    health_ok = False
+    try:
+        health = json.loads(health_path.read_text())
+        health_ok = True
+        age_h = None
+        gen = health.get("generated_at")
+        try:
+            age_h = round((now - (datetime.fromisoformat(gen) if gen else
+                                  datetime.fromtimestamp(health_path.stat().st_mtime))
+                           ).total_seconds() / 3600, 1)
+        except (OSError, ValueError):
+            pass
+        stats["static_scan"] = {"summary": health.get("summary", "?"),
+                                "blocked": len(health.get("blocked", [])),
+                                "scanned": health.get("scanned", 0),
+                                "age_hours": age_h}
+    except (OSError, ValueError) as e:
+        stats["static_scan"] = {"error": str(e)}
+        logger.warning("soul_health.json unreadable: %s", e)
+
+    if not events_ok and not health_ok:
+        raise RuntimeError(
+            "context-block monitor down: neither context_blocks.jsonl nor "
+            "soul_health.json is readable — check qnoe-context-tally.timer")
+    if stats["anomalies"]:
+        logger.warning("%d unparsed block-like log line(s) — Hermes may have "
+                       "changed the warning format; inspect kind=anomaly events "
+                       "in context_blocks.jsonl", stats["anomalies"])
+    return stats
+
+
 TASKS: list = [
     task_qdrant_snapshot,
     task_index_repos,
     task_sync_sharepoint,
     task_process_change_queue,
     task_orphan_cleanup,
+    task_context_blocks,
 ]
 
 
@@ -703,6 +798,29 @@ def _summarise_stats(task_name: str, stats: dict) -> str:
         deleted = (stats.get("repo", {}) or {}).get("deleted", 0)
         deleted += (stats.get("server", {}) or {}).get("deleted", 0)
         return f"{deleted} orphans deleted"
+    if task_name == "task_context_blocks":
+        hrs = stats.get("window_hours", 24)
+        targets = stats.get("by_target") or {}
+        if targets:
+            segs = [f"{t} ({', '.join(f'{p} ×{c}' for p, c in pats.items())})"
+                    for t, pats in list(targets.items())[:5]]
+            if len(targets) > 5:
+                segs.append(f"+{len(targets) - 5} more")
+            blocks = f"blocks {hrs}h: {stats.get('events', 0)} — " + "; ".join(segs)
+        else:
+            blocks = f"blocks {hrs}h: none"
+        ss = stats.get("static_scan") or {}
+        if "error" in ss:
+            static = f"static scan UNREADABLE ({ss['error'][:60]})"
+        else:
+            state = f"⚠️ {ss.get('blocked', '?')} BLOCKED" if ss.get("blocked") else "CLEAN"
+            static = f"static: {state} ({ss.get('scanned', '?')} files, {ss.get('age_hours', '?')}h old)"
+        out = f"{blocks} | {static}"
+        if stats.get("tally_stale"):
+            out += " | ⚠️ TALLY STALE — check qnoe-context-tally.timer"
+        if stats.get("anomalies"):
+            out += f" | ⚠️ {stats['anomalies']} unparsed block-line(s)"
+        return out
     return str(stats)[:80]
 
 

@@ -1,0 +1,11 @@
+# Hourly trigger for qnoe-context-tally.service. Fires at :17 to stay clear of
+# the 02:00 nightly reindex and the 07:00 report cron.
+[Unit]
+Description=Hourly QNOE context-block tally
+
+[Timer]
+OnCalendar=*-*-* *:17:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

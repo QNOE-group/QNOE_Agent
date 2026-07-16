@@ -192,6 +192,33 @@ def _task_detail(t: dict) -> str:
         deleted = (stats.get("repo") or {}).get("deleted", 0)
         deleted += (stats.get("server") or {}).get("deleted", 0)
         return f"{deleted} orphans deleted"
+    if n == "task_context_blocks":
+        # Threat-scanner context drops (M53 lineage) — anything non-zero here
+        # means prompt content was silently withheld from the model.
+        hrs = stats.get("window_hours", 24)
+        targets = stats.get("by_target") or {}
+        if targets:
+            segs = [f"{t} ({', '.join(f'{p} ×{c}' for p, c in pats.items())})"
+                    for t, pats in list(targets.items())[:5]]
+            if len(targets) > 5:
+                segs.append(f"+{len(targets) - 5} more")
+            detail = (f"<b>context blocks ({hrs}h): {stats.get('events', 0)}</b> — "
+                      + "; ".join(segs))
+        else:
+            detail = f"context blocks ({hrs}h): none"
+        ss = stats.get("static_scan") or {}
+        if "error" in ss:
+            detail += " · <b>static scan unreadable</b>"
+        elif ss.get("blocked"):
+            detail += (f" · <b>static scan: ⚠️ {ss['blocked']} file(s) BLOCKED</b> "
+                       f"({ss.get('scanned', '?')} scanned)")
+        else:
+            detail += f" · static scan: CLEAN ({ss.get('scanned', '?')} files)"
+        if stats.get("tally_stale"):
+            detail += " · <b>⚠️ tally STALE — check qnoe-context-tally.timer</b>"
+        if stats.get("anomalies"):
+            detail += f" · <b>⚠️ {stats['anomalies']} unparsed block-line(s)</b>"
+        return detail
     return str(stats)[:80] if stats else "—"
 
 

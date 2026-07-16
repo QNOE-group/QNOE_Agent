@@ -1,0 +1,17 @@
+# QNOE context-block tally (see scripts/context_block_tally.py, mistakes M53).
+# Runs as qnoe-ai OUTSIDE the OpenShell sandbox ON PURPOSE: it must read the
+# 0700 profile logs (hermes/profiles/*/logs/agent.log) as their owner. Scope is
+# read hermes/ + write /opt/qnoe-agent/logs/ only — no network, no secrets.
+# Deploy: sudo cp → /etc/systemd/system/ → daemon-reload → enable --now the timer.
+[Unit]
+Description=QNOE context-block tally (threat-scanner drop tracking)
+
+[Service]
+Type=oneshot
+User=qnoe-ai
+Group=qnoe-ai
+UMask=0002
+WorkingDirectory=/opt/qnoe-agent
+Environment=HERMES_ROOT=/opt/qnoe-agent/hermes
+Environment=HERMES_VENV_SITE_PACKAGES=/opt/qnoe-agent/hermes-venv/lib/python3.12/site-packages
+ExecStart=/opt/qnoe-agent/hermes-venv/bin/python3 /opt/qnoe-agent/scripts/context_block_tally.py
