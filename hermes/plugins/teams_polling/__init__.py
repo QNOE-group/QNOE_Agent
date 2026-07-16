@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
+import html as _html_mod
+
 import aiohttp
 import msal
 
@@ -65,6 +67,95 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 def _strip_html(text: str) -> str:
     """Remove HTML tags from Teams message body content."""
     return _HTML_TAG_RE.sub("", text).strip()
+
+
+# -- Markdown -> Teams HTML ---------------------------------------------------
+# The model replies in markdown, but Graph `contentType: "text"` renders it
+# raw — literal ** and -, structure collapsed into one paragraph. Teams chat
+# renders a small HTML subset (p, br, b, i, ul/ol/li, pre, code, a,
+# blockquote), so we convert the common constructs and send as HTML.
+
+_MD_CODE_RE = re.compile(r"`([^`\n]+)`")
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+_MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_MD_ITALIC_RE = re.compile(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])")
+_MD_BULLET_RE = re.compile(r"^\s{0,3}[-*+]\s+(.*)")
+_MD_NUMBER_RE = re.compile(r"^\s{0,3}\d{1,3}[.)]\s+(.*)")
+_MD_HEADING_RE = re.compile(r"^#{1,6}\s+(.*)")
+
+
+def _md_inline(s: str) -> str:
+    s = _html_mod.escape(s)
+    s = _MD_CODE_RE.sub(r"<code>\1</code>", s)
+    s = _MD_LINK_RE.sub(r'<a href="\2">\1</a>', s)
+    s = _MD_BOLD_RE.sub(r"<b>\1</b>", s)
+    s = _MD_ITALIC_RE.sub(r"<i>\1</i>", s)
+    return s
+
+
+def _markdown_to_teams_html(text: str) -> str:
+    out: list[str] = []
+    para: list[str] = []
+    items: list[str] = []
+    list_tag = ""
+    code: list[str] | None = None
+
+    def flush_para() -> None:
+        if para:
+            out.append("<p>" + "<br>".join(para) + "</p>")
+            para.clear()
+
+    def flush_list() -> None:
+        nonlocal list_tag
+        if items:
+            out.append(f"<{list_tag}>" + "".join(items) + f"</{list_tag}>")
+            items.clear()
+        list_tag = ""
+
+    for raw in text.split("\n"):
+        line = raw.rstrip()
+        if code is not None:
+            if line.strip().startswith("```"):
+                out.append("<pre>" + _html_mod.escape("\n".join(code)) + "</pre>")
+                code = None
+            else:
+                code.append(raw)
+            continue
+        if line.strip().startswith("```"):
+            flush_para()
+            flush_list()
+            code = []
+            continue
+
+        m = _MD_BULLET_RE.match(line)
+        tag = "ul"
+        if not m:
+            m = _MD_NUMBER_RE.match(line)
+            tag = "ol"
+        if m:
+            flush_para()
+            if list_tag and list_tag != tag:
+                flush_list()
+            list_tag = tag
+            items.append("<li>" + _md_inline(m.group(1)) + "</li>")
+            continue
+        flush_list()
+
+        h = _MD_HEADING_RE.match(line)
+        if h:
+            flush_para()
+            out.append("<p><b>" + _md_inline(h.group(1)) + "</b></p>")
+            continue
+        if not line.strip():
+            flush_para()
+            continue
+        para.append(_md_inline(line))
+
+    if code is not None:  # unterminated fence
+        out.append("<pre>" + _html_mod.escape("\n".join(code)) + "</pre>")
+    flush_para()
+    flush_list()
+    return "".join(out)
 
 
 def check_teams_polling() -> bool:
@@ -423,15 +514,31 @@ class TeamsPollingAdapter(BasePlatformAdapter):
         metadata: dict | None = None,
     ) -> SendResult:
         try:
+            body = {"content": _markdown_to_teams_html(content), "contentType": "html"}
+        except Exception as exc:
+            logger.warning("Teams markdown->html failed (%s) — sending plain text", exc)
+            body = {"content": content, "contentType": "text"}
+        try:
             result = await self._post(
                 f"{GRAPH_BASE}/chats/{chat_id}/messages",
-                {"body": {"content": content, "contentType": "text"}},
+                {"body": body},
             )
             return SendResult(
                 success=True,
                 message_id=result.get("id"),
             )
         except Exception as exc:
+            if body["contentType"] == "html":
+                # Graph rejected the rendered HTML — degrade to plain text
+                logger.warning("Teams HTML send failed (%s) — retrying as text", exc)
+                try:
+                    result = await self._post(
+                        f"{GRAPH_BASE}/chats/{chat_id}/messages",
+                        {"body": {"content": content, "contentType": "text"}},
+                    )
+                    return SendResult(success=True, message_id=result.get("id"))
+                except Exception as exc2:
+                    exc = exc2
             logger.error("Teams send failed: %s", exc)
             return SendResult(success=False, error=str(exc))
 

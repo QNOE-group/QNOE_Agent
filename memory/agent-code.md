@@ -1,5 +1,5 @@
 # Agent Code
-*Last updated: 2026-07-16 (context-block tally)*
+*Last updated: 2026-07-16 (Teams HTML formatting + context-block tally)*
 
 > Agent source files, message flow, tools, and how the pieces connect.
 > Full guide: [[AGENT_CODE_GUIDE]] · Framework design: [[AGENT_FRAMEWORK]] · Migration audit: [[MIGRATION_AUDIT]]
@@ -45,7 +45,26 @@ Dead code moved 2026-07-08 during migration audit:
 4. RAG memory provider prefetches context from Qdrant (hybrid dense+BM25)
 5. Hermes calls vLLM with tool schemas + RAG context + user message
 6. Tool-call loop (built-in tools: read_file, list_directory, search_files, terminal, etc.)
-7. Response sent back via Teams
+7. Response sent back via Teams — rendered as HTML (see below)
+
+## Teams reply formatting (2026-07-16)
+
+Replies were unreadable walls of text: `send()` posted `contentType: "text"`, so
+the model's markdown showed raw (`**`, `-`) with structure collapsed. Fix (both
+in `teams_polling/__init__.py`, deployed to BOTH copies per [[memory/mistakes#M13]]):
+
+- `_markdown_to_teams_html()` — dependency-free converter for the HTML subset
+  Teams chat renders: `<p>`/`<br>` paragraphs, `<ul>/<ol>/<li>`, `<b>`, `<i>`,
+  `<code>`, fenced blocks → `<pre>`, links, headings → bold lines. HTML-escapes
+  everything first.
+- `send()` posts `contentType: "html"`; on conversion error OR Graph rejecting
+  the HTML it degrades to the old plain-text send (a bad message can never
+  block a reply).
+- SOUL style rule added to all 3 profiles: short paragraphs, bullets for
+  enumerations, bold key values, never one long paragraph.
+
+Verify after redeploys: ask a list-shaped question in Teams (e.g. run
+parameters) and check bullets render. Log timestamps in agent.log are UTC.
 
 ## Tool Definitions
 
