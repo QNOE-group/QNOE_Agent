@@ -47,6 +47,35 @@ SP_MANIFEST_DB = os.environ.get("SP_MANIFEST_DB", "/opt/qnoe-agent/memory/sharep
 DEFAULT_LIMIT = 25
 MAX_LIMIT = 100
 
+# Never surface indexed-but-junk paths in find_file results — bundled Python
+# envs, notebook checkpoints, PyInstaller hooks. Mirrors config/watcher.yaml
+# exclusions; these rows are STALE (indexed before the watcher exclusions
+# existed) and pollute find_file (and RAG). This is belt-and-suspenders at
+# query time; the stale rows should also be purged from the manifest + Qdrant
+# (ingestion-hygiene item). Keep in sync with watcher.yaml.
+_EXCLUDE_SUBSTRINGS = [
+    "/.ipynb_checkpoints/",
+    "/site-packages/",
+    "/venv/",
+    "/.venv/",
+    "/__pycache__/",
+    "/node_modules/",
+    "/PyInstaller/",
+    "/_pyinstaller/",
+    "/Personal/Sergi/QTM - Copy/",
+]
+
+
+def _exclusion_sql(col: str):
+    """Build ``(sql_fragment, params)`` that filters stale junk paths out of a
+    manifest query. Wildcards in the patterns are escaped so a path's own
+    ``_`` isn't treated as a LIKE wildcard."""
+    def esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    frag = "".join(f" AND {col} NOT LIKE ? ESCAPE '\\'" for _ in _EXCLUDE_SUBSTRINGS)
+    params = [f"%{esc(s)}%" for s in _EXCLUDE_SUBSTRINGS]
+    return frag, params
+
 FIND_FILE_SCHEMA = {
     "name": "find_file",
     "description": (
@@ -92,12 +121,14 @@ def _search_cifs(query: str, limit: int) -> List[Dict[str, Any]]:
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         except sqlite3.OperationalError:
             continue
+        excl_sql, excl_params = _exclusion_sql("file_path")
         try:
             # Table may not exist in every DB — guard with try.
             rows = conn.execute(
-                """SELECT file_path, collection FROM index_manifest
-                    WHERE file_path LIKE ? ORDER BY file_path LIMIT ?""",
-                (like, limit),
+                f"""SELECT file_path, collection FROM index_manifest
+                    WHERE file_path LIKE ?{excl_sql}
+                    ORDER BY file_path LIMIT ?""",
+                (like, *excl_params, limit),
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
@@ -132,11 +163,13 @@ def _search_sharepoint(query: str, limit: int) -> List[Dict[str, Any]]:
         conn = sqlite3.connect(f"file:{SP_MANIFEST_DB}?mode=ro&immutable=1", uri=True)
     except sqlite3.OperationalError:
         return []
+    excl_sql, excl_params = _exclusion_sql("item_path")
     try:
         rows = conn.execute(
-            """SELECT item_path, site_name, web_url, collection FROM sp_manifest
-                WHERE item_path LIKE ? ORDER BY item_path LIMIT ?""",
-            (like, limit),
+            f"""SELECT item_path, site_name, web_url, collection FROM sp_manifest
+                WHERE item_path LIKE ?{excl_sql}
+                ORDER BY item_path LIMIT ?""",
+            (like, *excl_params, limit),
         ).fetchall()
     except sqlite3.OperationalError:
         rows = []
