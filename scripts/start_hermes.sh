@@ -39,6 +39,13 @@ export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 
+# No outbound telemetry — nothing leaves the lab network. mem0 defaults
+# MEM0_TELEMETRY=True and phones home to us.i.posthog.com; inside the B7
+# sandbox the L7 proxy blocks it (403) but it retry-storms the logs. Disable at
+# source. DO_NOT_TRACK=1 also silences huggingface_hub + any DNT-respecting lib.
+export MEM0_TELEMETRY=False
+export DO_NOT_TRACK=1
+
 # ── Access control (enforced by the gateway; UX by hermes/plugins/qnoe_authz) ─
 # GATEWAY_ALLOWED_USERS = permanent members ("floor") — always allowed, never
 # lockable. Everyone else is approved dynamically via the notify-and-approve
