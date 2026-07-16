@@ -842,9 +842,24 @@ def register(ctx) -> None:
     validator (transform_llm_output hook, redteam R11)."""
     ctx.register_memory_provider(QnoeRagProvider())
     try:
-        ctx.register_hook(
-            "transform_llm_output", _grounding_validator().validate_reply
-        )
-        logger.info("qnoe_rag: grounding validator registered (transform_llm_output)")
+        gv = _grounding_validator().validate_reply
+        ctx.register_hook("transform_llm_output", gv)
+        # BELT: register directly into the singleton PluginManager that the
+        # agent's turn_finalizer invoke_hook() reads. ctx.register_hook alone
+        # did NOT make the hook dispatch (R11 debugging) — this guarantees the
+        # callback is on the manager the agent actually consults. Idempotent.
+        try:
+            from hermes_cli.plugins import get_plugin_manager
+            mgr = get_plugin_manager()
+            hooks = mgr._hooks.setdefault("transform_llm_output", [])
+            if gv not in hooks:
+                hooks.append(gv)
+            logger.info(
+                "qnoe_rag: grounding validator registered "
+                "(transform_llm_output; %d callback(s) on the agent's manager)",
+                len(hooks),
+            )
+        except Exception as belt_exc:
+            logger.warning("qnoe_rag: singleton hook belt failed: %s", belt_exc)
     except Exception as exc:  # never let the validator break plugin load
         logger.warning("qnoe_rag: grounding validator NOT registered: %s", exc)

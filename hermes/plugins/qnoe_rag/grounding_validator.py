@@ -147,11 +147,30 @@ def _file_path_exists(path: str) -> bool:
     return False
 
 
+# Negation cues near a reference → the model is DENYING it exists (e.g. "no run
+# 999999 exists", "could not find …"), not asserting it as real. Don't
+# double-flag those — the footer is for fabrications ASSERTED as real.
+_DENIAL_RE = re.compile(
+    r"no run|does\s*n['o]?t?\s*exist|doesn't exist|not\s+exist|no such|no entry|"
+    r"not\s+found|could\s*n['o]?t?\s*find|cannot find|can't find|not in the "
+    r"registry|no matching|no record|unverified|unconfirmed|no data for",
+    re.IGNORECASE,
+)
+_DENIAL_WINDOW = 90  # chars each side of the reference
+
+
+def _denied(text: str, start: int, end: int) -> bool:
+    ctx = text[max(0, start - _DENIAL_WINDOW): end + _DENIAL_WINDOW]
+    return _DENIAL_RE.search(ctx) is not None
+
+
 def check(response_text: str) -> dict:
     """Pure analysis — returns the verdict without side effects (unit-testable).
 
     {'fab_runs': [...], 'fab_dbs': [...], 'unver_paths': [...],
      'n_runs': int, 'n_dbs': int, 'n_paths': int}
+    References the model itself flags as nonexistent (denial context) are NOT
+    reported — only references asserted as real but unverifiable.
     """
     fab_runs: list[int] = []
     fab_dbs: list[str] = []
@@ -163,19 +182,23 @@ def check(response_text: str) -> dict:
         if rid in seen_runs:
             continue
         seen_runs.add(rid)
-        if not _run_exists(rid):
+        if not _run_exists(rid) and not _denied(response_text, m.start(), m.end()):
             fab_runs.append(rid)
 
     seen_paths: set[str] = set()
-    dbs: list[str] = []
-    for p in _ROOTED_PATH_RE.findall(response_text):
+    dbs: list[tuple] = []          # (path, start, end)
+    paths: list[tuple] = []
+    for m in _ROOTED_PATH_RE.finditer(response_text):
+        p = m.group(0)
         if p in seen_paths:
             continue
         seen_paths.add(p)
-        (dbs if p.lower().endswith(".db") else unver_paths).append(p)
+        (dbs if p.lower().endswith(".db") else paths).append((p, m.start(), m.end()))
 
-    fab_dbs = [d for d in dbs if not _db_path_exists(d)]
-    unver_paths = [p for p in unver_paths if not _file_path_exists(p)]
+    fab_dbs = [p for (p, s, e) in dbs
+               if not _db_path_exists(p) and not _denied(response_text, s, e)]
+    unver_paths = [p for (p, s, e) in paths
+                   if not _file_path_exists(p) and not _denied(response_text, s, e)]
 
     return {
         "fab_runs": fab_runs,
@@ -183,7 +206,7 @@ def check(response_text: str) -> dict:
         "unver_paths": unver_paths,
         "n_runs": len(seen_runs),
         "n_dbs": len(dbs),
-        "n_paths": len(seen_paths) - len(dbs),
+        "n_paths": len(paths),
     }
 
 
