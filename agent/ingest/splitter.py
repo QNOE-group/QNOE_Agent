@@ -383,11 +383,18 @@ def _chunk_pdf(path: Path, repo: str) -> list[dict]:
         _log_empty_pdf(path)
         return []
 
-    # Step 4: if pypdf got substantial text and it doesn't look like a paper, use it directly
-    if len(text.strip()) >= MIN_PYPDF_CHARS and not _is_likely_paper(path, text):
+    # Step 4: if pypdf got a usable TEXT LAYER, extract it directly (FAST — skip
+    # the slow Docling layout pass). PDF_TEXTLAYER_FAST=1 (bulk ingest) lowers the
+    # bar to MIN_DOCLING_CHARS and includes papers: a born-digital PDF gains little
+    # from Docling-WITHOUT-OCR (Docling reads the same text layer pypdf already
+    # got, but ~50x slower on image-heavy pages). Truly-scanned PDFs (< the floor,
+    # no text layer) fall through to Step 3's OCR path.
+    fast_textlayer = os.environ.get("PDF_TEXTLAYER_FAST", "").strip() == "1"
+    pypdf_floor = MIN_DOCLING_CHARS if fast_textlayer else MIN_PYPDF_CHARS
+    if len(text.strip()) >= pypdf_floor and (fast_textlayer or not _is_likely_paper(path, text)):
         chunks = _chunk_pdf_text(text, path, repo)
         if chunks:
-            logger.debug("PDF via pypdf: %s → %d chunks", path.name, len(chunks))
+            logger.debug("PDF via pypdf (text layer): %s → %d chunks", path.name, len(chunks))
             return chunks
 
     # Step 5: paper detected or 200–2000 chars (short/ambiguous) → Docling for layout-aware extraction

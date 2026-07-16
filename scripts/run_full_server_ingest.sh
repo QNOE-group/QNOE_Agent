@@ -28,6 +28,11 @@ export EXCLUDE_FOLDERS="${EXCLUDE_FOLDERS:-Notebook}"
 
 # --- memory-safety (a persistent worker ballooned to 31GB on Docling -> OOM) ---
 export DOCLING_MAX_FILE_BYTES="${DOCLING_MAX_FILE_BYTES:-26214400}"  # 25MB — skip explosion-prone huge PDF/PPTX
+# --- speed: route by text layer (days -> hours) ---
+# Born-digital PDFs (pypdf gets a text layer) -> fast direct extraction, skip the
+# slow Docling layout pass. Only genuinely-scanned (no-text) PDFs go to Docling+OCR.
+export PDF_TEXTLAYER_FAST="${PDF_TEXTLAYER_FAST:-1}"
+export DOCLING_OCR="${DOCLING_OCR:-1}"   # OCR the scanned (no-text-layer) minority
 export WORKERS="${WORKERS:-4}"        # max concurrent batch subprocesses (semaphore)
 export BATCH_SIZE="${BATCH_SIZE:-40}" # files per subprocess — exits+frees Docling memory every 40 files
 export MIN_FREE_GB="${MIN_FREE_GB:-50}"  # do not launch a new batch below this free RAM (big headroom)
