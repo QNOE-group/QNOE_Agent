@@ -96,6 +96,7 @@ Triggered by a health-check flag: `group-wide` grew ~634K (07-09 BM25 snapshot) 
 3. `task_sync_sharepoint` — full sync of both SP sites (safety net for missed deltas)
 4. `task_process_change_queue` — process watcher's stable entries
 5. `task_orphan_cleanup` — remove chunks for files missing 7+ days
+6. `task_context_blocks` — read-only summary of threat-scanner context drops (24h) from the hourly `qnoe-context-tally.timer` outputs in `logs/`; stale/missing tally = task FAILURE, never "clean" (2026-07-16, see [[memory/agent-code#Context-block tally]])
 
 ## Ingestion Stats
 

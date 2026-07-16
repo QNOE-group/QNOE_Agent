@@ -158,3 +158,15 @@
 **Verified:** b7_probe 24/24 in-sandbox; Teams round-trip, Mem0 write/recall (incl. across restarts), RAG, qcodes run-848, and the R4 perm-write probe — model ATTEMPTED the write, filesystem refused (EROFS), file hash unchanged. Failure drills: openshell-gateway restart (unit self-heals ~60s), docker kill, clean stop, Conflicts-flip both ways.
 **Deferred to hardening:** dedicated sandbox uid (identity isolation), OpenShell inference proxy for the LLM path, systemd drop-in retirement after weeks of stability. **Carried caveat:** red-team harness Channel A (`hermes -z`) still runs UNCONFINED on the host.
 **Runtime traps solved on the way (see [[memory/mistakes#M50]]):** OpenShell forces HOME=/sandbox; landlock blocks /dev/null writes + reads of unlisted paths (incl. bind-mount targets and the container cwd); ALL egress must ride the injected L7 proxy (aiohttp needs trust_env=True; anything hardcoding localhost breaks — Mem0's Qdrant host now derives from QDRANT_URL; LLM base_url = http://host.openshell.internal:8000/v1 with a host /etc/hosts alias to 127.0.0.1 so ONE config serves all mechanisms).
+
+## D19 — Context-block tracking: log-parse + re-scan as qnoe-ai systemd timer, no core patch (2026-07-16)
+
+**Decision:** Track threat-scanner context drops via (a) hourly incremental parsing of the per-profile `agent.log` block-WARNINGs + (b) hourly `soul_health.py` re-scan, run by `qnoe-context-tally.timer` (oneshot, User=qnoe-ai, OUTSIDE the OpenShell sandbox), surfaced in the nightly Teams report by a read-only `task_context_blocks`.
+**Why this shape:**
+- **systemd timer over qnoe-ai crontab** — `sudo crontab -u qnoe-ai` isn't NOPASSWD (untestable/undeployable by Claude); a unit deploys/tests/rolls back with allowed sudo and matches the `qnoe-b7-test` pattern.
+- **qnoe-ai, outside the sandbox** — profile logs are 0700 qnoe-ai (yzamir can't read them); cron/timers run outside B7 anyway. Scope limited to read `hermes/`, write `logs/`.
+- **Log-parse IN ADDITION to re-scan** — the log is the only record of what was actually dropped at turn time; the re-scan catches live file edits between restarts.
+- **No Hermes core patch** — a prompt_builder emit-hook would join the fragile M53 re-apply-on-upgrade list; instead a loose-match "anomaly" canary makes core message-format drift visible.
+- **Append-only JSONL, single writer per file** — sidesteps the M52 cross-UID SQLite WAL trap; 0664 + umask 002 so the yzamir nightly can read.
+- **Self-monitoring** — stale/missing tally = report warning / task FAILURE, never "clean" (the original failure class was a silent monitor).
+Alternatives rejected: re-scan-only (misses transient + per-turn reality), immediate Teams alerts from the tally job (would hand Graph creds to an out-of-sandbox job; nightly review satisfies the requirement). Plan + execution deltas: [[CONTEXT_BLOCK_TRACKING_PLAN]].

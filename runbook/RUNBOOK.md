@@ -696,3 +696,31 @@ python -m agent.ingest.ingest_all --force-ext .pdf
   `scripts/b7_probe.sh` together, redeploy, re-run both probes.
 - **Gateway restart choreography:** restarting `openshell-gateway` kills the sandbox relay; the
   unit self-heals in ~60s (expected). Expect one auto-resume echo reply after any restart.
+
+## Context-block tally (since 2026-07-16)
+
+Hourly monitor that makes Hermes threat-scanner drops visible (M53 lineage — a blocked
+context file used to leave only a per-turn WARNING in a 0700 qnoe-ai log). Details:
+[[memory/agent-code#Context-block tally]] · plan: [[CONTEXT_BLOCK_TRACKING_PLAN]].
+
+```bash
+# Install (repo copies live in config/)
+sudo cp config/qnoe-context-tally.service config/qnoe-context-tally.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now qnoe-context-tally.timer
+
+# Run now / verify
+sudo systemctl start qnoe-context-tally.service
+cat /opt/qnoe-agent/logs/soul_health.json               # fresh static scan (6 files)
+tail /opt/qnoe-agent/logs/context_blocks.jsonl           # block events (30d retention)
+cat /opt/qnoe-agent/logs/context_block_tally.state.json  # last_run = tally heartbeat
+
+# Consumers: nightly task_context_blocks (02:00) → Teams report line (07:00 post_report cron)
+# Disable / rollback
+sudo systemctl disable --now qnoe-context-tally.timer
+```
+
+Notes: the service runs as **qnoe-ai OUTSIDE the sandbox** on purpose (must read the 0700
+profile logs); it writes only to `logs/`. If the nightly line ever shows
+"⚠️ N unparsed block-line(s)" after a Hermes upgrade, the core reworded its block warnings —
+update `STRICT_RES` in `scripts/context_block_tally.py` (see [[memory/deploy-patterns]]).

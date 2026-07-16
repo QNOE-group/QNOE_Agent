@@ -458,3 +458,10 @@ provides_hooks:
 2. **Index purge** (`scripts/purge_stale_index.py`) — removes the stale manifest rows AND their Qdrant points. Server 10759→7600, repo 1675→1665.
 **Rule design (important):** match **slash-bounded DIRECTORY segments** (`/QTM - Copy/`), NEVER a bare word ("copy") — else a legit `data_copy.xlsx` gets nuked. Dry-run + a data-extension safety scan first (the 648 data-type files caught were all matplotlib test-fixture PDFs inside `Anaconda/Lib/site-packages` — pure junk). Back up the manifest DBs (`.bak-pre-purge`); Qdrant has nightly snapshots.
 **Lesson:** adding an exclusion to watcher.yaml does NOT retroactively clean the index. After tightening ingestion exclusions, run the purge for the newly-excluded patterns. Orphan-cleanup ≠ exclusion-cleanup (different triggers: missing-on-disk vs excluded-from-scan).
+
+## M57 — Two Claude sessions, one working tree: HEAD moved + commit amended mid-task (2026-07-16)
+
+**Symptom:** Mid-implementation, `CONTEXT_BLOCK_TRACKING_PLAN.md` "did not exist" and `git log` showed unknown R11 commits — my feature branch and its base commit had vanished from view.
+**Root cause:** A second Claude session works in the SAME `Z:\code\AI_Student` checkout. It (a) checked out master while I was on a feature branch, (b) AMENDED the commit I had branched from (same message, new hash), and (c) edited TODO.md between my read and my edit.
+**Fix applied:** cherry-picked my commit onto the new master (paths didn't overlap), deleted the stale branch, left the other session's in-flight `qnoe_files` edit uncommitted, skipped SETUP_LOG mid-session to avoid collisions (appended at end instead).
+**Rules:** with two active sessions, (1) re-check `git log`/`git status` immediately before ANY branch op or commit — don't trust a snapshot from minutes ago; (2) `git add` explicit paths, never `-A`; (3) prefer committing straight onto the current branch over feature branches (a branch base can be amended away under you); (4) re-read shared files (TODO.md, SETUP_LOG.md) right before editing; (5) expect Edit-tool "file changed on disk" notes and treat them as a signal the other session is active in that file.

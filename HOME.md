@@ -1,5 +1,5 @@
 # HOME — Claude Code Memory Index
-*Last updated: 2026-07-14 (B7 systemd sandbox)*
+*Last updated: 2026-07-16 (context-block tally live)*
 
 > **Purpose:** Persistent memory for Claude Code working on the QNOE Lab Agent project.
 > Start every session here. Follow links to topic files as needed.
@@ -47,6 +47,7 @@
 | [[CONTEXT_EXECUTION_PLAN]] | Hand-off plan for roadmap steps 1-3 (vLLM 64K+fp8, toolset slimming, Provence) — executed 2026-07-09/10 |
 | [[GPT_OSS_CUTOVER_PLAN]] | Hand-off plan for the production cutover to gpt-oss-120b via llama.cpp — executed 2026-07-10 |
 | [[GPT_OSS_PILOT_PLAN]] | Pilot plan for gpt-oss-120b — vLLM path FAILED (M39/M41); llama.cpp path won → see [[GPT_OSS_CUTOVER_PLAN]] |
+| [[CONTEXT_BLOCK_TRACKING_PLAN]] | Context-block tracking (threat-scanner drop tally + hourly scan + nightly report line) — executed 2026-07-16 |
 | [[USER_GUIDE]] | Plain-language guide for lab members (find files, look up measurement runs) — WIP |
 | [[MVP_VERIFICATION_PLAN]] | The 4 remaining MVP-1 acceptance tests (routing, RAG-paper, /switch recast, /help recast) — pre-declaration checklist |
 | `redteam/BACKLOG.md` | Red-team harness findings log (R1-R4, M47) — the adversarial test loop's memory |
@@ -55,6 +56,8 @@
 | [[WATCHER_PLAN]] | SMB3 watcher daemon design |
 
 ## Active Workstream
+
+**Context-block tally LIVE (2026-07-16)** — no threat-scanner drop is silent anymore: hourly `qnoe-context-tally.timer` (qnoe-ai, outside sandbox) parses profile agent.logs (two warning formats) → `logs/context_blocks.jsonl` + hourly `soul_health.py` rescan (rewritten — now mirrors BOTH scan surfaces: SOUL context-scope + `memories/` per-entry strict-scope); nightly `task_context_blocks` + Teams-report line with staleness/format-drift self-monitoring. Plan+deltas: [[CONTEXT_BLOCK_TRACKING_PLAN]]; details [[memory/agent-code#Context-block tally]]; decision [[memory/decisions#D19]]. Ride-along: first real `memory_entry` event.
 
 **MVP-1 DECLARED (2026-07-10)** — all rescoped acceptance criteria pass (see [[SETUP_LOG]] declaration section). Stack: gpt-oss-120b via llama.cpp (4×64K), 3 Hermes profiles, hybrid RAG + Mem0 + QCoDeS registry grounding, T0/T1 read-only.
 

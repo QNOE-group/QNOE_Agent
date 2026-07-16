@@ -1595,3 +1595,26 @@ now guarded so a RAG failure degrades to empty RAG instead of killing the hooks.
 non-determinism 3/5→4/5); memory guard split (R6: user-context→memory,
 lab-records→tools); registry-hook run-id regex broadened (R5: "run with ID N").
 Full findings: `redteam/BACKLOG.md` R1-R9.
+
+---
+
+## 2026-07-16 — Context-block tally deployed (threat-scanner drop tracking)
+
+Executed [[CONTEXT_BLOCK_TRACKING_PLAN]] end-to-end in one session (commits a0b8925 + dd5eec5):
+
+- **Deployed:** `scripts/context_block_tally.py` (hourly log-parse + soul_health rescan),
+  rewritten `scripts/soul_health.py` (now mirrors BOTH production scan surfaces — SOUL
+  context-scope whole-file + `memories/{MEMORY,USER}.md` per-entry strict-scope; old version
+  scanned the wrong path/scope and covered only the 3 exempt SOULs), `qnoe-context-tally.{service,timer}`
+  (hourly at :17, User=qnoe-ai, enabled at boot), `task_context_blocks` in nightly_run.py +
+  HTML line in post_report.py. Backups: `*.bak-pre-tally` beside the three overwritten files.
+- **Recon findings:** two core warning formats (prompt_builder "Context file X blocked" +
+  memory_tool "Memory entry from X blocked at load time"); RAG/tool results NOT scanned by
+  core (web/browser/mcp results get untrusted-delimiter wrapping instead); post_report is a
+  separate 07:00 cron (not wired inside nightly_run — docs corrected).
+- **Verified:** first run captured all 11 historical M53 SOUL-block lines; reruns idempotent;
+  planted prompt_injection entry in photocurrent memories/MEMORY.md → detected by the hourly
+  rescan, rendered in txt+HTML report, reverted (checksum-verified) → CLEAN again.
+- **Open ride-alongs:** first production report line (07-17 ~07:00); first real memory_entry
+  event; delete .bak-pre-tally after soak. Decision rationale: [[memory/decisions#D19]].
+  Concurrent-session git trap hit + documented: [[memory/mistakes#M57]].
