@@ -286,6 +286,10 @@ def ingest_directory(
     # backfill of static archived docs, and makes every resume near-instant. The
     # nightly leaves this OFF so it still hash-detects changed files.
     skip_if_indexed = os.environ.get("INGEST_SKIP_IF_INDEXED", "").strip() == "1"
+    # Read each new file's bytes ONCE over CIFS, hash from them, and stage to a
+    # LOCAL temp for extraction — eliminates the SECOND CIFS read per file (CIFS
+    # bandwidth is the bottleneck). Gated; the nightly / other callers leave it off.
+    stage_local = os.environ.get("INGEST_STAGE_LOCAL", "").strip() == "1"
 
     for path in files:
         if skip_if_indexed and conn.execute(
@@ -293,10 +297,15 @@ def ingest_directory(
         ).fetchone():
             skipped += 1
             continue
+        data = None
         try:
-            sha256 = _file_hash(path)
+            if stage_local:
+                data = path.read_bytes()                      # the SINGLE CIFS read
+                sha256 = hashlib.sha256(data).hexdigest()
+            else:
+                sha256 = _file_hash(path)
         except Exception as exc:
-            logger.warning("Could not hash %s: %s", path, exc)
+            logger.warning("Could not read %s: %s", path, exc)
             try:
                 with open(SKIPPED_FILES_LOG, "a", encoding="utf-8") as f:
                     f.write(f"{path}\t{exc}\n")
@@ -358,16 +367,29 @@ def ingest_directory(
         # Delete old chunks from Qdrant before re-indexing
         _delete_old_chunks(client, conn, path, team)
 
-        chunks = chunk_file(path, repo_name)
+        if data is not None:
+            # Extract from a LOCAL temp copy (no 2nd CIFS read). Keep the suffix
+            # so chunk_file dispatches correctly (pdf/pptx/docx/py/ipynb/...).
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=(path.suffix or ".bin"), delete=False, dir="/tmp") as _tf:
+                _tf.write(data)
+                _tmp = Path(_tf.name)
+            data = None
+            try:
+                chunks = chunk_file(_tmp, repo_name)
+            finally:
+                _tmp.unlink(missing_ok=True)
+        else:
+            chunks = chunk_file(path, repo_name)
         if not chunks:
             continue
 
-        # Store the canonical (normalized) path in the Qdrant payload, not the
-        # /mnt/noe read path — keeps the corpus + find_file on /ICFO paths.
+        # Store the canonical path in the payload (chunk_file saw the temp path;
+        # overwrite with the real /ICFO-normalized path so the corpus + find_file
+        # stay on /ICFO paths).
         sk = _store_key(path)
-        if sk != str(path):
-            for c in chunks:
-                c["source"] = sk
+        for c in chunks:
+            c["source"] = sk
 
         if len(chunks) == 1:
             try:

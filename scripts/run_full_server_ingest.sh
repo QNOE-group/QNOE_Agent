@@ -36,6 +36,9 @@ export DOCLING_OCR="${DOCLING_OCR:-1}"   # OCR the scanned (no-text-layer) minor
 # Skip files already in the manifest WITHOUT re-reading them over CIFS (bulk
 # backfill of static docs; makes resume instant). Nightly leaves this off.
 export INGEST_SKIP_IF_INDEXED="${INGEST_SKIP_IF_INDEXED:-1}"
+# Read each new file ONCE over CIFS (hash + extract from the same bytes via a
+# local temp) instead of twice — CIFS bandwidth is the bottleneck.
+export INGEST_STAGE_LOCAL="${INGEST_STAGE_LOCAL:-1}"
 export WORKERS="${WORKERS:-8}"        # max concurrent batch subprocesses (semaphore)
 export BATCH_SIZE="${BATCH_SIZE:-40}" # files per subprocess — exits+frees Docling memory every 40 files
 export MIN_FREE_GB="${MIN_FREE_GB:-50}"  # do not launch a new batch below this free RAM (big headroom)
