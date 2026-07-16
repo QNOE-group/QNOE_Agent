@@ -448,3 +448,13 @@ provides_hooks:
 2. **`/new` scope (by design, not a bug):** `/new` clears the CONVERSATION, but Mem0 facts are per-USER (cross-session) — so they persist. Expected; the fix is what's stored, not clearing on /new.
 **Action taken:** purged the 14 query-logs, kept the 2 durable facts (`/tmp/purge_querylogs.py`, qdrant delete by user_id filter → 16→2). **KEEP the model's source-attribution behaviour — user likes "the memory says…" framing; do NOT suppress it.** The mislabel (calling a registry block "memory") is a minor accuracy nit, not worth a guard given the user preference.
 **Lesson:** "poisoning" = FALSE facts asserted as real (M47). Query-logs stored as facts are TRUE-but-noise — a hygiene problem, diagnosed by dumping the user's episodic_memory and reading the facts, not by assuming poisoning.
+
+## M56 — Stale ingestion index: junk files linger after watcher exclusions are added (2026-07-16)
+
+**Symptom:** find_file returned bundled-Python-env files (`site-packages/`, `PyInstaller/`), notebook `.ipynb_checkpoints/`, and a `Personal/Sergi/QTM - Copy/` folder (2795 files). Assumed a live find_file/watcher bug.
+**Root cause:** NOT a live bug. `config/watcher.yaml` already excludes all these patterns, so the watcher skips them on NEW scans — but the files were indexed BEFORE the exclusions were added, and nothing removes the old rows: nightly **orphan-cleanup only deletes rows whose file is MISSING on disk**, and these files still exist (just excluded from re-indexing). So ~3159 junk rows (29% of the server manifest) + ~21k Qdrant chunks persisted, polluting both find_file and RAG retrieval.
+**Fix (two layers):**
+1. **find_file query filter** (`qnoe_files._EXCLUDE_SUBSTRINGS` + `_exclusion_sql`, commit d1b609e) — hides junk at query time. Belt-and-suspenders.
+2. **Index purge** (`scripts/purge_stale_index.py`) — removes the stale manifest rows AND their Qdrant points. Server 10759→7600, repo 1675→1665.
+**Rule design (important):** match **slash-bounded DIRECTORY segments** (`/QTM - Copy/`), NEVER a bare word ("copy") — else a legit `data_copy.xlsx` gets nuked. Dry-run + a data-extension safety scan first (the 648 data-type files caught were all matplotlib test-fixture PDFs inside `Anaconda/Lib/site-packages` — pure junk). Back up the manifest DBs (`.bak-pre-purge`); Qdrant has nightly snapshots.
+**Lesson:** adding an exclusion to watcher.yaml does NOT retroactively clean the index. After tightening ingestion exclusions, run the purge for the newly-excluded patterns. Orphan-cleanup ≠ exclusion-cleanup (different triggers: missing-on-disk vs excluded-from-scan).
