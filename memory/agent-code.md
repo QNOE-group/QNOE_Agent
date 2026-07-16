@@ -1,5 +1,5 @@
 # Agent Code
-*Last updated: 2026-07-16 (Teams HTML formatting + context-block tally)*
+*Last updated: 2026-07-16 (grounding validator modes/defaults + R11 #2 misattribution/sample-params/find_file)*
 
 > Agent source files, message flow, tools, and how the pieces connect.
 > Full guide: [[AGENT_CODE_GUIDE]] · Framework design: [[AGENT_FRAMEWORK]] · Migration audit: [[MIGRATION_AUDIT]]
@@ -123,6 +123,25 @@ parameters) and check bullets render. Log timestamps in agent.log are UTC.
 - **Schema:** All 8 collections have `text-sparse` field (added 2026-07-06 via `create_vector_name`)
 - **Backfill:** `agent/indexing/backfill_sparse.py` — resumable, tracks progress in `sparse_backfill` SQLite table. Backfill COMPLETE 2026-07-09 (all 10 collections stamped in `sparse_backfill`).
 - **pip path:** use `pip3` not `pip` in agent venv (`/opt/qnoe-agent/venv/bin/pip3`)
+
+### Grounding validator (`qnoe_rag/grounding_validator.py`, redteam R11)
+
+A deterministic **`transform_llm_output`** hook (fires post-reply in `agent/turn_finalizer.py`; reply-text-only — it does NOT see the user question). It extracts every cited run id / `.db` path / rooted file path from the reply, verifies each against the QCoDeS registry + manifests, and appends one **`⚠️ Unverified references`** footer — it FLAGS, never edits the body. **Fail-open** (any DB/read error treats the ref as valid — never cry wolf on a transient hiccup) + **denial-context suppression** (a ref the model itself denies, "no run 999999", is not double-flagged). Dispatch requires `provides_hooks: [transform_llm_output]` in `plugin.yaml` AND a belt-registration into the `get_plugin_manager()._hooks` singleton ([[memory/mistakes#M54]]).
+
+**Checks & their default config (this is what "mode" means — an env var; if unset, the in-code fallback below applies; none are currently set in `start_hermes.sh`, so all run at these defaults):**
+
+| Check | Env toggle | Default | Kind |
+|---|---|---|---|
+| fabricated run / fabricated `.db` | (none) | always on | STRICT |
+| **run↔DB** misattribution — real run cited in the wrong db (`run_id` is per-DB; composite key `(db_path, run_id)`) | (none) | always on | STRICT |
+| whole validator master switch | `QNOE_GROUNDING_VALIDATE` | **ON** | — |
+| **run↔type** — real run mislabelled as wrong measurement type (claimed-type phrase-regex vs `run_name`+`exp_name`) | `QNOE_GROUNDING_CHECK_TYPE` | **ON** | ADVISORY |
+| **run↔sample / run↔params** — wrong sample or a param the run never recorded | `QNOE_GROUNDING_CHECK_SAMPLE_PARAMS` | **OFF** | ADVISORY |
+| bare unverified file-path earns a footer on its own | `QNOE_GROUNDING_FLAG_PATHS` | **OFF** | ADVISORY |
+
+**Why default-ON vs default-OFF** = false-positive confidence. STRICT + `CHECK_TYPE` are exact registry lookups (or a tuned phrase-regex) → footer live traffic safely. The OFF ones carry residual FP risk that needs live tuning first: `CHECK_SAMPLE_PARAMS` because registry `sample_name` is verbose free text diverging from folder names + params are channel tokens not physics notation (mitigated: accept from `sample_name` OR db path; only registry-style `lowercase_underscore` param tokens checked); `FLAG_PATHS` because a path can be real-but-unindexed (permission-locked folder). **OFF-by-default = built + offline-tested but deliberately silent until someone validates its live FP rate and flips the env var** (instant, no redeploy). Reuse machinery: `_pair_runs_to_dbs` (same-line / sticky "same DB"), `_run_in_db` (`(db_path,run_id)` composite), suffix-LIKE path matching (`_esc` wildcard-escaping — exact match false-flagged real space-containing paths like `L110 QTM`).
+
+**Verification:** offline unit tests run against the live registry via SSH (deploy to `/tmp`, `python3` as `yzamir`) — misattribution 7/7, sample/params 9/9, find_file gate 12/12 (2026-07-16). Live: `redteam/probes.py` survey-confab class (`survey-fake-run-in-list`, `survey-misattribution`, `survey-real-baseline` FP guard). Commits eb89d23 (misattribution) + f696f19 (sample/params + find_file gate, bundled by a concurrent session — [[memory/mistakes]] M57 sequel).
 
 ## Nightly Report (agent/reporting/post_report.py)
 
