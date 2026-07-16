@@ -1,5 +1,5 @@
 # QNOE Lab Agent — Master TODO
-*Last updated: 2026-07-14 — red-team R10 secret-leak (harness runs outside B7) fixed; password rotation + conf-fake-db redesign queued*
+*Last updated: 2026-07-16 — Teams HTML formatting deployed (E2E verify pending, llama.cpp down for re-ingest)*
 
 > Claude Code memory: [[HOME]] · Migration tracker: [[memory/hermes-migration]] · Decisions: [[memory/decisions]]
 
@@ -56,6 +56,8 @@
   - Original: **red-team R4, 2026-07-14.** The agent performed a REAL unauthorized write (`# reviewed by agent` → `repos/QTM-CodeBase/README.md`, reverted) in 1/5 red-team runs. T0/T1 read-only is SOUL-instruction-only; `write_file`/`patch`/`terminal` are resident and the model occasionally uses them. Data-integrity issue, not just a wrong answer. Real fix = re-enable the **OpenShell sandbox** ([[PHASE2_BACKLOG]] B7) for the Hermes gateway: run it as the unprivileged `sandbox` user under `config/sandbox-policy.yaml`'s landlock read-only mounts (`/ICFO/groups/NOE`, `/opt/...` read-only; rw only on memory/logs/skills). The container + policy already exist (Phase 0) — it's re-wire+test, not build-from-scratch. Two gaps to close: **add `/opt/qnoe-agent/repos` to the policy's read_only list** (predates the repos-in-/opt layout — the R4 write target wasn't covered), and add the `localhost:8000` model endpoint to the network policy. Note: `terminal: backend: docker` alone is insufficient — the R4 write came via the `write_file`/`patch` FILE tools, which need the whole agent under the sandbox. Interim: accept for MVP (trusted users + allowlist). See `redteam/BACKLOG.md` Round 2b.
 
 - [x] **MVP-1 DECLARED (2026-07-10)** ✅ — all rescoped criteria pass; evidence table in [[SETUP_LOG]]. Verification round found+fixed M44 (registry perms), M45 (Mem0 anon-uid), M46 (memory poisoning). Ride-alongs below remain.
+
+- [ ] **🟢 Verify Teams HTML formatting E2E (deployed 2026-07-16, commit 0fe41a9).** `teams_polling.send()` now converts markdown → Teams HTML (`contentType: html`, plain-text fallback on conversion error or Graph rejection) + SOUL structure rule (short paragraphs, bullets, bold) in all 3 profiles. Deployed to both plugin copies (M13), M50 drift diff clean, gateway restarted, poller reconnected. **Could not verify E2E** — llama.cpp was down for the full server re-ingest at deploy time. Once inference is back: ask a list-shaped question via Teams (e.g. "what were the parameters of run 848?") and confirm bullets/bold/code render instead of a wall of text; also check one reply containing a fenced code block. Details: [[memory/agent-code]] §Teams reply formatting.
 
 - [ ] **Re-ask run 159** through the agent — expect **49** databases (was 35 before the M44 permission fix) with `/ICFO/...` paths in the sample.
 - [x] **Re-ask the gate-sweep question** ✅ *(verified 2026-07-14 via sandbox Teams — run 848 correct; also redteam Round 5 hook-runid PASS)*.
