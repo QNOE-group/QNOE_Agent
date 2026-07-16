@@ -20,7 +20,7 @@ export EMBED_MODEL_PATH=/opt/qnoe-agent/models/nomic-embed
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export PYTHONPATH=/opt/qnoe-agent
-export EXCLUDE_EXTENSIONS="${EXCLUDE_EXTENSIONS:-}"   # e.g. ".txt" to skip raw measurement text
+export EXCLUDE_EXTENSIONS="${EXCLUDE_EXTENSIONS:-.txt}"   # skip raw-measurement .txt (user decision 2026-07-16); override with EXCLUDE_EXTENSIONS="" to include
 
 WORKERS="${1:-12}"
 shift || true

@@ -15,7 +15,8 @@ Read via `/mnt/noe`, **store canonical `/ICFO/groups/NOE` paths** (so already-in
 ## Scope (allowlist in `ingest_server.SERVER_FOLDERS`)
 **INCLUDE (20):** Lab_Instruments, Manuscripts, Matlab scripts, Meetings, Notebook, Notebooks, Papers & Books, Posters, Presentation, Presentations, Projects, Python scripts, QCoDeS, QTLab, Samples, Scripts, Setups, Spectromag, Teaching, Theses & reports.
 **EXCLUDE (per your decision):** `Fabrication`, `Personal`; plus junk/archive `Data Backup`, `ai_agent`, `Pictures`, `Rendering Files`, `National Instruments Downloads`, `.obsidian`, `Obsidian`, `.TemporaryItems`. Per-file junk (`venv`, `__pycache__`, `.ipynb_checkpoints`, `Personal/Sergi/QTM - Copy`) pruned by `watcher.yaml`.
-**OPEN DECISION — `.txt`:** the server has thousands of raw-measurement `.txt` (1 chunk each, e.g. "PH freqsweep…"). Default here = **include** (don't silently drop; some are readmes). To skip: set `EXCLUDE_EXTENSIONS=.txt`. Your call before we run.
+**`.txt` — DECIDED 2026-07-16: EXCLUDE** (raw-measurement noise). Launcher defaults `EXCLUDE_EXTENSIONS=.txt`; override with `EXCLUDE_EXTENSIONS=""` to include.
+**Fabrication — DECIDED 2026-07-16: leave as-is.** It's excluded from this scan (allowlist), and the pre-existing `/ICFO/…/Fabrication/…` manifest rows (indexed when that ACL was open) are NOT purged.
 
 ## What was changed (staged in the repo + deployed to DGX)
 1. **`agent/ingest/run_ingest.py`**
