@@ -15,18 +15,23 @@ Two modes:
              figure PDFs are EXCLUDED by default — they carry no text and
              mostly re-fail; --include-plots overrides.
 
-  --execute  Feed every manifest item back through sharepoint_sync's
-             _process_item (download -> chunk -> embed -> upsert -> record),
-             smallest files first, with a bounded thread pool and the sync's
-             own memory guard. Etag dedup makes re-runs resume instantly.
+  --execute  Memory-gated semaphore over RECYCLED subprocess batches — the
+             parallel_server_ingest pattern: the manifest is split into small
+             batch files, each processed by a FRESH `--execute-batch`
+             subprocess that EXITS when done (frees Docling/embed memory); a
+             new batch launches only when (running < WORKERS) AND
+             (MemAvailable >= MIN_FREE_GB). An OOM kills just that batch
+             (rc=-9, logged); etag dedup makes re-runs resume instantly.
              Ends with a reconciliation: attempted items still absent from
              sp_manifest are written to logs/sp_reingest_failed.txt — this
              run's failures are NOT silent.
 
-Env knobs (read by sharepoint_sync/splitter at import):
+  --execute-batch FILE   (internal) process one batch JSONL sequentially in
+             this process, then exit.
+
+Env knobs:
+  WORKERS / BATCH_SIZE / MIN_FREE_GB   semaphore shape (defaults 6 / 25 / 25)
   SP_FILE_CHUNK_TIMEOUT  per-file chunk cap, default 300 — raise to 1800 here
-  SP_THREAD_WORKERS      concurrent items (keep small, Docling spikes RAM)
-  SP_MIN_FREE_GB         memory-guard floor (default 20)
   PDF_TEXTLAYER_FAST=1   born-digital PDFs via pypdf (fast), scanned skipped
 
 Run as yzamir (same uid as the watcher/nightly manifest writers — no
@@ -131,74 +136,95 @@ def build(cache: str, site: str, out: str, max_mb: int, include_plots: bool) -> 
     return 0
 
 
-def execute(manifest_path: str, site: str) -> int:
-    # Heavy imports (splitter/embed via sharepoint_sync) only in execute mode.
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+def _mem_available_gb() -> float:
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024 * 1024)
+    except Exception:
+        pass
+    return 0.0
+
+
+def execute_batch(batch_path: str, site: str) -> int:
+    """(child) Process one batch JSONL sequentially, then exit — memory is
+    recycled with the process (parallel_server_ingest pattern)."""
     from qdrant_client import QdrantClient
     from agent.ingest import sharepoint_sync as sp
     from agent.ingest.sharepoint_client import authenticate
 
     cfg = sp.load_sharepoint_config(None)
-    site_cfgs = [s for s in cfg["sites"] if s["name"] == site]
-    if not site_cfgs:
-        logger.error("site %s not in sharepoint.yaml", site)
-        return 2
-    site_cfg = site_cfgs[0]
+    site_cfg = [s for s in cfg["sites"] if s["name"] == site][0]
     temp_dir = Path(cfg.get("temp_dir", "/tmp/qnoe-sharepoint/"))
-
-    items = []
-    with open(manifest_path) as f:
-        for line in f:
-            if line.strip():
-                items.append(json.loads(line))
-    logger.info("manifest: %d items, timeout=%ss, workers=%s, min_free=%sGB, fast_pdf=%s",
-                len(items), sp.FILE_CHUNK_TIMEOUT, sp.THREAD_WORKERS,
-                sp.MIN_FREE_GB, os.environ.get("PDF_TEXTLAYER_FAST", "0"))
-
     token = authenticate(cfg["auth"])
     holder = sp._SharedToken(token, cfg["auth"])
     client = QdrantClient(url=sp.QDRANT_URL)
-    logger.info("authentication OK")
 
     stats = Counter()
-    attempted_paths = [_item_path(it) for it in items]
+    with open(batch_path) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            drive_id = item.get("parentReference", {}).get("driveId", "")
+            try:
+                ok = sp._process_item(item, site_cfg, drive_id, temp_dir, holder, client)
+                stats["indexed" if ok else "not_indexed"] += 1
+            except Exception as exc:
+                logger.error("item error %s: %s", item.get("name", "?"), exc)
+                stats["error"] += 1
+    logger.info("BATCH DONE %s %s", Path(batch_path).name, dict(stats))
+    return 0
 
-    def _run(item: dict) -> bool:
-        drive_id = item.get("parentReference", {}).get("driveId", "")
-        return sp._process_item(item, site_cfg, drive_id, temp_dir, holder, client)
 
-    # Bounded sliding window (full_sync pattern) + the sync's memory guard.
-    MAX_QUEUED = sp.THREAD_WORKERS * 2
-    it = iter(items)
-    pending: dict = {}
-    done = 0
-    with ThreadPoolExecutor(max_workers=sp.THREAD_WORKERS) as pool:
-        def _fill() -> None:
-            while len(pending) < MAX_QUEUED:
-                if not sp._memory_ok():
-                    logger.warning("memory guard active — pausing submissions 60s")
-                    time.sleep(60)
-                    continue
-                try:
-                    item = next(it)
-                except StopIteration:
-                    return
-                pending[pool.submit(_run, item)] = item
+def execute(manifest_path: str, site: str) -> int:
+    """(parent) Split the manifest into batches; run each in a fresh
+    subprocess under a memory-gated semaphore (parallel_server_ingest model)."""
+    import subprocess
+    import tempfile
 
-        _fill()
-        while pending:
-            for fut in as_completed(pending):
-                item = pending.pop(fut)
-                try:
-                    stats["indexed" if fut.result() else "not_indexed"] += 1
-                except Exception as exc:
-                    logger.error("item error %s: %s", item.get("name", "?"), exc)
-                    stats["error"] += 1
-                done += 1
-                if done % 25 == 0:
-                    logger.info("progress %d/%d — %s", done, len(items), dict(stats))
-                _fill()
-                break
+    workers = int(os.environ.get("WORKERS", "6"))
+    batch_size = int(os.environ.get("BATCH_SIZE", "25"))
+    min_free_gb = float(os.environ.get("MIN_FREE_GB", "25"))
+
+    lines = [l for l in open(manifest_path) if l.strip()]
+    attempted_paths = [_item_path(json.loads(l)) for l in lines]
+    batchdir = Path(tempfile.mkdtemp(prefix="sp_reingest_batches_", dir="/tmp"))
+    batches: list[Path] = []
+    for i in range(0, len(lines), batch_size):
+        bf = batchdir / f"batch_{i // batch_size:05d}.jsonl"
+        bf.write_text("".join(lines[i:i + batch_size]))
+        batches.append(bf)
+    logger.info("%d items -> %d batches of <=%d | semaphore: <=%d concurrent AND "
+                ">=%.0fGB free | chunk timeout=%ss fast_pdf=%s | etag-resumable",
+                len(lines), len(batches), batch_size, workers, min_free_gb,
+                os.environ.get("SP_FILE_CHUNK_TIMEOUT", "300"),
+                os.environ.get("PDF_TEXTLAYER_FAST", "0"))
+
+    cmd_base = [sys.executable, os.path.abspath(__file__),
+                "--site", site, "--execute-batch"]
+    running: dict = {}
+    idx = done = failed = 0
+    while idx < len(batches) or running:
+        for p in list(running):
+            rc = p.poll()
+            if rc is None:
+                continue
+            bf = running.pop(p)
+            done += 1
+            if rc != 0:
+                failed += 1
+                logger.error("batch %s exited rc=%d (rc=-9 => OOM-killed) — "
+                             "its files stay un-done; resumable", bf.name, rc)
+            if done % 10 == 0 or not running:
+                logger.info("progress: %d/%d batches (%d failed) | running=%d | free=%.0fGB",
+                            done, len(batches), failed, len(running), _mem_available_gb())
+        while (idx < len(batches) and len(running) < workers
+               and _mem_available_gb() >= min_free_gb):
+            bf = batches[idx]; idx += 1
+            running[subprocess.Popen(cmd_base + [str(bf)])] = bf
+        time.sleep(3)
 
     # Reconciliation: what is STILL not in the manifest? (this run's failures,
     # made visible — the exact silence that created the original gap)
@@ -210,9 +236,9 @@ def execute(manifest_path: str, site: str) -> int:
     with open(FAILED_LIST, "w") as f:
         f.write("\n".join(still_missing) + ("\n" if still_missing else ""))
 
-    logger.info("DONE. attempted=%d indexed_result=%s still_missing=%d (list: %s)",
-                len(items), dict(stats), len(still_missing), FAILED_LIST)
-    print(f"RESULT attempted={len(items)} stats={dict(stats)} "
+    logger.info("DONE. attempted=%d batches=%d failed_batches=%d still_missing=%d (list: %s)",
+                len(lines), done, failed, len(still_missing), FAILED_LIST)
+    print(f"RESULT attempted={len(lines)} batches={done} failed_batches={failed} "
           f"still_missing={len(still_missing)} failed_list={FAILED_LIST}")
     return 0 if not still_missing else 1
 
@@ -225,6 +251,8 @@ def main(argv) -> int:
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--build", action="store_true")
     mode.add_argument("--execute", action="store_true")
+    mode.add_argument("--execute-batch", metavar="FILE",
+                      help="(internal) process one batch JSONL, then exit")
     ap.add_argument("--cache", default=DEFAULT_CACHE, help="full-sync listing cache JSONL")
     ap.add_argument("--site", default="noe-group")
     ap.add_argument("--manifest", default=DEFAULT_MANIFEST)
@@ -235,6 +263,8 @@ def main(argv) -> int:
 
     if args.build:
         return build(args.cache, args.site, args.manifest, args.max_mb, args.include_plots)
+    if args.execute_batch:
+        return execute_batch(args.execute_batch, args.site)
     return execute(args.manifest, args.site)
 
 
