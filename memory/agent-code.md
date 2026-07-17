@@ -1,5 +1,5 @@
 # Agent Code
-*Last updated: 2026-07-16 (grounding validator modes/defaults + R11 #2 misattribution/sample-params/find_file)*
+*Last updated: 2026-07-17 (Mem0 write hygiene: provenance + first-party write-gate classifier; grounding validator modes/defaults + R11 #2)*
 
 > Agent source files, message flow, tools, and how the pieces connect.
 > Full guide: [[AGENT_CODE_GUIDE]] · Framework design: [[AGENT_FRAMEWORK]] · Migration audit: [[MIGRATION_AUDIT]]
@@ -142,6 +142,12 @@ A deterministic **`transform_llm_output`** hook (fires post-reply in `agent/turn
 **Why default-ON vs default-OFF** = false-positive confidence. STRICT + `CHECK_TYPE` are exact registry lookups (or a tuned phrase-regex) → footer live traffic safely. The OFF ones carry residual FP risk that needs live tuning first: `CHECK_SAMPLE_PARAMS` because registry `sample_name` is verbose free text diverging from folder names + params are channel tokens not physics notation (mitigated: accept from `sample_name` OR db path; only registry-style `lowercase_underscore` param tokens checked); `FLAG_PATHS` because a path can be real-but-unindexed (permission-locked folder). **OFF-by-default = built + offline-tested but deliberately silent until someone validates its live FP rate and flips the env var** (instant, no redeploy). Reuse machinery: `_pair_runs_to_dbs` (same-line / sticky "same DB"), `_run_in_db` (`(db_path,run_id)` composite), suffix-LIKE path matching (`_esc` wildcard-escaping — exact match false-flagged real space-containing paths like `L110 QTM`).
 
 **Verification:** offline unit tests run against the live registry via SSH (deploy to `/tmp`, `python3` as `yzamir`) — misattribution 7/7, sample/params 9/9, find_file gate 12/12 (2026-07-16). Live: `redteam/probes.py` survey-confab class (`survey-fake-run-in-list`, `survey-misattribution`, `survey-real-baseline` FP guard). Commits eb89d23 (misattribution) + f696f19 (sample/params + find_file gate, bundled by a concurrent session — [[memory/mistakes]] M57 sequel).
+
+### Mem0 write hygiene (`qnoe_rag.sync_turn` + `memory_gate.py`, 2026-07-17)
+
+Interim de-risk of Mem0 before the Cognee KG exists ([[memory/decisions#D20]], [[MEMORY_ARCHITECTURE]] Part 6). Two shipped pieces:
+- **Provenance metadata on every write** (commit 00d2ba8): `sync_turn` calls `add(..., metadata={source:"user-stated", src_msg:<verbatim ≤500>, session, prov_v:1})`. Ends the nuclear-wipe failure mode (M47) — purge becomes a `qdrant delete` by metadata filter; `src_msg` records which utterance produced a fact. mem0 2.0.11 `add()` accepts `metadata` (and `expiration_date` in metadata — reserved for the decision-#4 TTL).
+- **First-party/third-party write-gate classifier** (`hermes/plugins/qnoe_rag/memory_gate.py`, commit 787a93f; 29/29 offline tests `redteam/grounding/test_memory_gate.py`). Design = **post-filter on Mem0's extracted facts** (a HOOK, not a prompt — prompt-guarding already failed at M55): Mem0's `add()` returns `{"results":[{id,memory,event}]}`; classify each `event=="ADD"` fact and `delete(id)` the DROPs (route UPDATE/DELETE to the audit). `classify_fact()` KEEPs personal prefs + first-party focus/interest pointers, DROPs lab-records (run id/.db/qcodes), lab query-logs (lookup verb + lab object = the M55 class), and third-party work (collective/possessive). Calibrated to real Mem0 phrasing (subject-less predicates). **Wiring into sync_turn + deploy is pending** (env toggle, default-OFF); own-work-fact storage stays out until Cognee is the oracle.
 
 ## Nightly Report (agent/reporting/post_report.py)
 

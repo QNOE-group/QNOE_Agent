@@ -52,10 +52,17 @@
 | [[MVP_VERIFICATION_PLAN]] | The 4 remaining MVP-1 acceptance tests (routing, RAG-paper, /switch recast, /help recast) — pre-declaration checklist |
 | `redteam/BACKLOG.md` | Red-team harness findings log (R1-R4, M47) — the adversarial test loop's memory |
 | [[MEM0_INTEGRATION]] | Program to add per-user Mem0 memory inside `qnoe_rag` (see [[memory/decisions#D13]]) |
+| [[MEMORY_ARCHITECTURE]] | Two-layer memory design: Cognee corpus-KG + Mem0 personalization; first-party/third-party boundary; decisions ([[memory/decisions#D20]]) |
+| [[MEM0_HYGIENE_OPTIONS]] | Options menu for Mem0 provenance/audit/extraction-hygiene |
+| [[COGNEE_PLAN]] | Cognee corpus knowledge-graph (L5) — framework choice, config, dev/deploy phases |
+| [[COGNEE_ONTOLOGY]] | The KG schema — two tiers, node/edge types (research program, grounded in QNOE physics) |
+| [[KG_ONEPAGER]] | One-page KG summary for the PI (Frank) |
 | [[REPO_MAPPING]] | Repo → Qdrant collection mapping |
 | [[WATCHER_PLAN]] | SMB3 watcher daemon design |
 
 ## Active Workstream
+
+**Memory architecture — Cognee corpus-KG + Mem0 thinned (design, 2026-07-17)** — decided the future memory system ([[memory/decisions#D20]], [[MEMORY_ARCHITECTURE]]): a **Cognee** knowledge-graph of the group's *research program* (L5; concepts/questions/techniques/setups/projects anchored to measurement data) + **Mem0** narrowed to per-user personalization. Two tiers of truth — Tier 1 factual anchor (registry via `add_data_points`, deterministic) + Tier 2 research/conceptual (`cognify`, LLM-inferred, provenance-tagged). Framework = Cognee (beat LightRAG/GraphRAG/Graphiti — [[COGNEE_PLAN]]). Ontology in [[COGNEE_ONTOLOGY]]; PI one-pager [[KG_ONEPAGER]]. **Interim Mem0 de-risk shipped:** provenance metadata on writes (commit 00d2ba8) + a first-party/third-party write-gate classifier (`memory_gate.py`, 29/29 offline). **Next:** Phase-0 pilot — `cognify` the QTM/QTOM SharePoint docs (sourced from Qdrant) at `effort:high` and human-judge the conceptual graph (needs the LLM up; blocked while ingestion runs). Also shipped: R11 grounding follow-ups (misattribution / sample-params / find_file gate — offline-verified, deploy pending).
 
 **Context-block tally LIVE (2026-07-16)** — no threat-scanner drop is silent anymore: hourly `qnoe-context-tally.timer` (qnoe-ai, outside sandbox) parses profile agent.logs (two warning formats) → `logs/context_blocks.jsonl` + hourly `soul_health.py` rescan (rewritten — now mirrors BOTH scan surfaces: SOUL context-scope + `memories/` per-entry strict-scope); nightly `task_context_blocks` + Teams-report line with staleness/format-drift self-monitoring. Plan+deltas: [[CONTEXT_BLOCK_TRACKING_PLAN]]; details [[memory/agent-code#Context-block tally]]; decision [[memory/decisions#D19]]. Ride-along: first real `memory_entry` event.
 
