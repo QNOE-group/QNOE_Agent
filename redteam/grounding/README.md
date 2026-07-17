@@ -15,6 +15,7 @@ the throwaway `/tmp` scripts used during development.
 | `test_misattribution.py` | run↔DB (wrong db) + run↔type (mislabeled) + denial suppression + nonexistent-ref regression | **yes** (live `qcodes_registry`) |
 | `test_sample_params.py` | run↔sample / run↔params (default-OFF check; enabled in-test) + FP guards | **yes** |
 | `test_findfile_gate.py` | find_file bare-stem gate + whole-stem extraction + FP guards | no (stdlib only) |
+| `test_memory_gate.py` | Mem0 write-gate classifier — keep personal/first-party, drop lab-records/query-logs/third-party (calibrated to real Mem0 phrasing) | no (stdlib only) |
 
 The registry tests are anchored on real QTM rows (Tip5Sample9 run 848 = a
 gate-sweep; Tip6Sample9 runs 114–118 = IV, and 848 is not among them; Tip5 run

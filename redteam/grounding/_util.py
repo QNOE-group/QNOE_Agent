@@ -44,6 +44,11 @@ def load_grounding_validator():
     return _load("gv_under_test", "grounding_validator.py")
 
 
+def load_memory_gate():
+    """The Mem0 write-gate classifier (pure stdlib, no deps)."""
+    return _load("memory_gate_under_test", "memory_gate.py")
+
+
 def load_qnoe_rag():
     """The qnoe_rag package __init__ — stub its one non-stdlib top-level import
     (agent.memory_provider) so the find_file gate/extraction can load stdlib-only."""
