@@ -37,7 +37,8 @@ Everything below subclasses `QNode` (only the *distinctive* fields are listed). 
 | **Subteam** | organizational unit — QTM, Photocurrent, QED, Superconductivity, QSIM, XCHIRAL | code, lead | SOULs / config |
 | **Setup** | measurement rig — *L110 QTM*, *L206 Photocurrent*, *L208 Opticool*, *SpectroMag*, *THz laser*, *GRASP* | location, kind | db paths, `Setups/` |
 | **Sample** | physical 2D device — *Tip5Sample9*, *BFNB4_D4* | folder_name, crystal_name, fab_date | registry `sample_name` + folder |
-| **Run** | one QCoDeS measurement | run_id, db_path, run_name, exp_name, completed_at | QCoDeS registry (`add_data_points`) |
+| **Experiment** | a measurement **campaign** = one *Person* × one *Sample* × one *Setup* over a period (≈ a `YYYY.MM_TipXSampleY` measurement folder); **groups Runs** | started_at, ended_at, folder | folder/db grouping + `Notebook/` owner |
+| **Run** | one QCoDeS measurement (atomic) | run_id, db_path, run_name, exp_name, completed_at | QCoDeS registry (`add_data_points`) |
 | **MeasurementType** | gate-sweep, IV, photocurrent-map, cooldown, spectroscopy | — | `run_name`/`exp_name` via `_TYPE_RULES` |
 | **Dataset** | a `.db` file / data collection | db_path, n_runs | registry |
 | **Repository** | a GitHub repo — *QTM_CodeBase*, *SLG07-PhQH*, *GRASP-Acquisition* | url, subteam | repo list |
@@ -52,11 +53,9 @@ Everything below subclasses `QNode` (only the *distinctive* fields are listed). 
 | **Phenomenon** | a physical effect studied — *quantum Hall photocurrent*, *photothermoelectric effect*, *momentum-resolved tunneling*, *hyperbolic phonon-polaritons*, *unconventional superconductivity*, *non-local conductivity* | — | what experiments probe |
 | **Technique** | experimental/computational method — *momentum-resolved tunneling spectroscopy*, *scanning photocurrent microscopy*, *nano-IR / s-SNOM*, *transport*, *MEEP FDTD*, *tight-binding band-structure* | kind (exp/comp) | how research is done |
 | **PhysicalQuantity** | a control knob or observable — *gate voltage (Vg)*, *twist angle (θ)*, *temperature*, *wavelength*, *conductivity σ*, *responsivity*, *dispersion E(k)* | symbol, unit, role (control/observable) | **bridge** to registry params |
-| **ResearchQuestion** | an open question pursued — *how twist angle tunes tunneling momentum*, *what limits photocurrent responsivity*, *origin of non-local conductivity in BLG* | status (open/answered) | |
-| **ResearchDirection** | a broad thrust/theme — *momentum-resolved spectroscopy of 2D materials*, *quantum-Hall photocurrent*, *cavity QED with 2D materials* | — | groups projects/questions |
-| **Project** | a concrete effort — maps to repos/proposals (*SLG07-PhQH*, *BLG-QED*, *XCHIRAL*) | status, subteam | **anchor↔research hinge** |
-| **Hypothesis** | a testable claim — *"the sign change in photocurrent vs Vg marks the p-n junction"* | status | |
-| **Finding** | a concluded result/observation | status (claimed/published) | asserted with source |
+| **ResearchQuestion** | a question/theme pursued — **broad or specific** (merged: covers both the thrust *"momentum-resolved spectroscopy of 2D materials"* and the sharp *"how twist angle tunes tunneling momentum"*) | breadth (broad/specific), status (open/answered) | can `–refines→` another RQ for hierarchy |
+| **Project** | a concrete effort — maps to repos/proposals (*SLG07-PhQH*, *BLG-QED*, *XCHIRAL*) | status, subteam, **hypothesis / claims** (the testable statements the project asserts) | **anchor↔research hinge**; absorbs Hypothesis |
+| **Finding** | a concluded result/observation | status (claimed/published) | asserted with source; `–supports/refutes→ Project` |
 | **Publication** | paper / internal manuscript — from `Papers_Books/`, `Manuscripts/` | year, venue, doi, status | Tier-2 metadata; may bridge |
 
 ---
@@ -66,22 +65,24 @@ Everything below subclasses `QNode` (only the *distinctive* fields are listed). 
 Edges are `SkipValidation[Any]` fields (or `Edge(relationship_type=...)`), domain → range:
 
 ### Structural / factual (Tier 1)
-- `Run –measured_on→ Sample` · `Run –on_setup→ Setup` · `Run –is_type→ MeasurementType` · `Run –swept→ PhysicalQuantity` · `Run –measured→ PhysicalQuantity`
+- `Experiment –performed_by→ Person` · `Experiment –on_sample→ Sample` · `Experiment –on_setup→ Setup` · `Experiment –contains→ Run`
+- `Run –part_of→ Experiment` · `Run –measured_on→ Sample` · `Run –on_setup→ Setup` · `Run –is_type→ MeasurementType` · `Run –swept→ PhysicalQuantity` · `Run –measured→ PhysicalQuantity`
 - `Dataset –contains→ Run` · `Sample –made_of→ Material` · `Sample –owned_by / fabricated_by→ Person`
 - `Person –member_of→ Subteam` · `Setup –enables→ Technique` · `Repository –belongs_to→ Project` · `Repository –implements→ Software` · `Software –computes→ Technique`
 
 ### Research-semantic (Tier 2)
-- `Project –studies→ Concept | Phenomenon` · `Project –investigates→ Material` · `Project –pursues→ ResearchQuestion` · `Project –part_of→ ResearchDirection` · `Project –uses→ Technique`
+- `Project –studies→ Concept | Phenomenon` · `Project –investigates→ Material` · `Project –pursues→ ResearchQuestion` · `Project –uses→ Technique`
 - `Technique –probes→ Phenomenon` · `Technique –measures→ PhysicalQuantity` · `Technique –runs_on→ Setup`
 - `Material –exhibits→ Phenomenon` · `Phenomenon –described_by→ Concept` · `Concept –related_to→ Concept`
-- `ResearchQuestion –motivated_by→ Concept | Phenomenon` · `ResearchDirection –comprises→ ResearchQuestion`
+- `ResearchQuestion –motivated_by→ Concept | Phenomenon` · `ResearchQuestion –refines→ ResearchQuestion` (broad↔specific hierarchy, replacing the old Direction/Question split)
 - `Publication –addresses→ ResearchQuestion` · `Publication –reports→ Finding` · `Publication –uses→ Technique` · `Publication –studies→ Material | Phenomenon` · `Publication –authored_by→ Person` · `Publication –cites→ Publication`
-- `Finding –supports | refutes→ Hypothesis` · `Hypothesis –about→ Phenomenon | Concept`
+- `Finding –supports | refutes→ Project` (the project's hypothesis/claims field)
 - `Person –works_on→ Project` · `Person –expert_in→ Concept | Technique` · `Project –builds_on→ Project | Publication`
 
 ### ⭐ Cross-tier bridges (data ↔ research — the whole point)
-These connect the deterministic anchor to the inferred research graph and are what let the KG answer "what research does this measurement serve":
-- `Run –part_of→ Project` · `Run –tests→ Hypothesis` · `Run –probes→ Phenomenon` · `Run –contributes_to→ ResearchQuestion`
+The **Experiment** is the hinge: it carries the research intent that the atomic Run does not. These connect the deterministic anchor to the inferred research graph and let the KG answer "what research does this measurement serve":
+- `Experiment –part_of→ Project` · `Experiment –tests→ Project` (the project's hypothesis) · `Experiment –probes→ Phenomenon` · `Experiment –uses→ Technique` · `Experiment –contributes_to→ ResearchQuestion`
+- `Run –part_of→ Experiment` (atomic runs inherit the campaign's research context)
 - `Sample –made_of→ Material –exhibits→ Phenomenon` (materials chain)
 - `Setup –enables→ Technique –probes→ Phenomenon` (capability chain)
 
@@ -90,16 +91,18 @@ These connect the deterministic anchor to the inferred research graph and are wh
 ## 4. Worked subgraph (sanity check — the QTM twist-angle effort)
 
 ```
-ResearchDirection "momentum-resolved spectroscopy of 2D materials"
-  └─comprises→ ResearchQuestion "how twist angle tunes tunneling momentum"
+ResearchQuestion "momentum-resolved spectroscopy of 2D materials" (broad)
+  └─refines→ ResearchQuestion "how twist angle tunes tunneling momentum" (specific)
         ▲ motivated_by
   Concept "moiré momentum boost"   Concept "momentum conservation"
-Project "QTM twist-angle mapping" (repo QTM_CodeBase, subteam QTM)
+Project "QTM twist-angle mapping" (repo QTM_CodeBase, subteam QTM; hypothesis: "θ scans k-space")
   ├─pursues→ (that ResearchQuestion)
   ├─uses→ Technique "momentum-resolved tunneling spectroscopy" ─runs_on→ Setup "L110 QTM"
-  ├─investigates→ Material "graphene" ─exhibits→ Phenomenon "momentum-resolved tunneling"
-  └─(bridge) Run 848 ─part_of→ Project ; Run 848 ─measured_on→ Sample "Tip5Sample9" (made_of graphene)
-                     ─is_type→ MeasurementType "gate-sweep" ─swept→ PhysicalQuantity "gate voltage"
+  └─investigates→ Material "graphene" ─exhibits→ Phenomenon "momentum-resolved tunneling"
+Experiment "2026.05 Tip5Sample9 on L110" ─performed_by→ Person X ─on_sample→ Sample "Tip5Sample9" ─on_setup→ Setup "L110 QTM"
+  ├─part_of→ Project ; ─tests→ Project ; ─probes→ Phenomenon "momentum-resolved tunneling"
+  └─contains→ Run 848 ─is_type→ MeasurementType "gate-sweep" ─swept→ PhysicalQuantity "gate voltage" ─measured_on→ Sample "Tip5Sample9" (made_of graphene)
+Finding "θ-dependent E(k) observed" ─supports→ Project
 Publication "Inbar et al., Nature 2023 (QTM)" ─addresses→ (that ResearchQuestion) ─uses→ (that Technique)
 ```
 
@@ -122,4 +125,6 @@ If Phase-0 extraction on QTOM docs produces *this shape* — concepts/questions/
 
 ---
 
-*v1 essential types (start here): Tier 1 — Person, Subteam, Setup, Sample, Run, MeasurementType; Tier 2 — Material, Concept, Phenomenon, Technique, PhysicalQuantity, ResearchQuestion, Project, Publication. Hypothesis/Finding/ResearchDirection/Dataset/Repository/Software follow once the core extracts cleanly.*
+*Full type set (revised 2026-07-17 per review — Experiment added, ResearchQuestion+ResearchDirection merged, Hypothesis folded into Project): Tier 1 — Person, Subteam, Setup, Sample, **Experiment**, Run, MeasurementType, Dataset, Repository, Software; Tier 2 — Material, Concept, Phenomenon, Technique, PhysicalQuantity, ResearchQuestion, Project, Finding, Publication.*
+
+**QTOM pilot: extract the FULL Tier-2 set at once** (user decision 2026-07-17) — no v1 subsetting; run the whole ontology so the first read shows the real graph shape to judge.
