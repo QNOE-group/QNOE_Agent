@@ -148,9 +148,18 @@ class Person(DataPoint):       # from Notebook/<name>/, user_profiles.yaml, main
 
 **Continuous update (native).** `incremental_loading=True` is the default for both `add()` and `cognify()`; two dedup layers (content-hash in `add()`, then a `pipeline_status==COMPLETED` skip in `cognify()`) mean unchanged data costs **no LLM, no re-embed, no graph write**. So re-running the pipeline over the corpus is cheap in steady state — only new/changed items pay.
 
-**Wire into the existing nightly/watcher** (don't build a parallel ingest):
-- After the RAG ingest processes new/changed files, feed the **same normalized text** it already produced to `cognee.add()` + `cognify()` — **reuse the parsing/Docling output; do not re-read/re-parse raw PDFs twice.**
-- For registry changes, re-run `add_data_points` for new/changed runs (deterministic, cheap).
+**Source the conceptual corpus FROM Qdrant, not the filesystem (no CIFS/SharePoint/Docling re-read).** The RAG chunk payload already carries everything needed — verified fields: `text`, `source`, `start_line`, `chunk_type` (`code`|`prose`), `repo`. So the conceptual ingest is:
+1. **Scroll Qdrant with a scope filter** (below) — a local `localhost:6333` read; no file access.
+2. **Reconstruct documents:** group chunks by `source`, order by `start_line`, concatenate (dedup overlap). Reassembly restores document-level context so `cognify` extracts coherent concepts/relations, not fragments.
+3. `cognee.add()` + `cognify()` the reconstructed docs.
+
+This reuses all the expensive parsing, skips the painful CIFS/SP auth+mounts, and is **always current** (the watcher keeps Qdrant fresh) — so incremental conceptual updates = "read the changed points." For registry changes, re-run `add_data_points` (deterministic, cheap).
+
+**Scoping = the same Qdrant filter (this is how the conceptual corpus is chosen, and the cost lever from §8):**
+- `chunk_type == "prose"` — drops code deterministically (the field exists).
+- **Exclude junk** — `source` patterns `site-packages`, `/venv/`, `/.env/Lib/`, `Anaconda`, `node_modules`, `/figures/` decks, raw-data dirs. *(Not hypothetical: vendored library code — mpl_toolkits, nidaqmx under `site-packages` — is currently in the index; M56 stale-index class. Scoping keeps it out of the research graph.)*
+- **Allowlist research locations** — `Papers_Books/`, `Manuscripts/`, `Theses/`, research `Projects/` prose, proposals, `docs/`/READMEs, SharePoint research docs, notebook *markdown*; use the `repo` field (e.g. `confirmed_papers`). Exclude the `qcodes-runs` collection (Tier-1 anchor via `add_data_points`).
+- **Optional refinement:** semantic-relevance ranking (reuse the embeddings vs research-concept seed queries) + a research-vocabulary density score for borderline docs. **Curate the base allowlist WITH the group** — they know research folders vs raw dumps.
 - Same discipline as the existing full re-ingest: **memory-gated, resumable, off the llama.cpp during user hours**, plus a coverage audit.
 
 **The honest reuse boundary (your "rely on existing RAG if possible").** Cognee reuses the **Qdrant server** and can share the **nomic embedder** (serve it OpenAI-compatible so KG vectors live in the same space) — but it writes its **own `cognee_*` collections** and embeds its **own graph nodes**; it does **not** read the existing RAG chunk-collections as-is. So:
