@@ -790,9 +790,24 @@ class QnoeRagProvider(MemoryProvider):
                 # observed live 2026-07-10, mistakes M46: a fabricated
                 # superconductivity survey was distilled into Mem0 and then
                 # cited as "(Source: persistent memory context)").
+                #
+                # PROVENANCE (MEMORY_ARCHITECTURE.md Part 6 item 1): tag every
+                # distilled fact with its origin. `source` distinguishes
+                # user-stated from any future assistant-distilled write (the
+                # soft-rule own-work facts will carry source="user-claim"
+                # once Cognee is the oracle); `src_msg` is the verbatim user
+                # utterance that produced the fact, so an audit/purge can see
+                # WHAT was said and delete by filter (qdrant delete by
+                # metadata) instead of the nuclear per-user wipe M47 forced.
                 _get_mem0().add(
                     [{"role": "user", "content": user_content}],
                     user_id=uid,
+                    metadata={
+                        "source": "user-stated",
+                        "src_msg": user_content[:500],
+                        "session": session_id or "",
+                        "prov_v": 1,
+                    },
                 )
             except Exception as e:
                 logger.warning("Mem0 add failed: %s", e)
