@@ -182,6 +182,9 @@ LLM_MODEL="gpt-oss-120b"              # * consider a dedicated faster/stronger E
 LLM_ENDPOINT="http://localhost:8000/v1"
 LLM_API_KEY="sk-local"               # dummy; local endpoint
 STRUCTURED_OUTPUT_FRAMEWORK="instructor"   # * instructor|BAML — constrains gpt-oss JSON
+# reasoning_effort:high for cognify ONLY (per-request or dedicated batch config);
+# the live gateway stays effort:low. High effort needs generous max_tokens or the
+# long reasoning truncates the JSON (cf. the 512->1536 Mem0 bump).
 
 # --- Embeddings — nomic-embed served OpenAI-compatible (share the RAG space) ---
 EMBEDDING_PROVIDER="openai"          # * OpenAICompatibleEmbeddingEngine
@@ -222,6 +225,7 @@ VECTOR_DB_KEY=""
 - **⚠️ Conceptual-tier extraction quality (THE central risk — this is the heart of the graph, not a detail).** Tier 2 (concepts/questions/techniques/directions) is entirely LLM-inferred, so its value = extraction quality. A weak model doesn't just miss things — it **confabulates concepts and relationships**, producing a "ground-truth graph" that is an LLM's guess (the R11/poisoning failure mode at graph scale). This is **framework-independent** — Cognee, LightRAG, Graphiti are all LLM-bound here — so the real lever is the **extraction MODEL + validation**, not the framework. Mitigations: (a) a **strong dedicated extraction model** is likely *required* (gpt-oss-120b @ `reasoning_effort:low` is a real doubt for nuanced conceptual relations — probe it explicitly in Phase 0 on CONCEPTUAL, not just entity, extraction); (b) instructor/BAML typed output; (c) a tight prescribed ontology to constrain what can be created; (d) **provenance on every Tier-2 node** (source doc + model) so the graph is auditable and the grounding oracle can label conceptual context as *inferred*, never assert it as fact; (e) human spot-validation of the conceptual graph before it backs answers. The factual anchor (Tier 1) is deterministic and safe regardless — but the anchor is the *scaffold*, not the point.
 - **gpt-oss structured-output reliability for `cognify`** (weak local models emit malformed JSON). → instructor/BAML; validate in Phase 0/2; dedicated extraction model as the fallback.
 - **Extraction throughput @47 tok/s** (LightRAG flagged the <50 tok/s timeout cliff). → structured-first minimizes extraction; nightly/off-peak; gate list-heavy/code; incremental keeps steady-state cheap.
+- **Extraction effort & cost (no $ — DGX wall-clock only).** Use `reasoning_effort:high` for cognify (per-request or a dedicated batch config; live gateway stays low) — it's the cheaper experiment to try *before* a dedicated model, and batch/off-peak so it costs users no latency. High effort ≈ **3–5× the tokens/time** of low. Order-of-magnitude one-time build over the *scoped conceptual corpus* (research docs only, NOT the ~1M-chunk full corpus): ~3k chunks ≈ 3–5 days at high effort; ~10k chunks ≈ 1–2 weeks. **The dominant lever is SCOPE** (cognify only research-bearing docs — papers/proposals/notebooks/key repo prose — cutting the denominator 50–100×), plus it's one-time (incremental after is cheap) and off-peak. **Phase 0 measures the real per-paper time at effort:high and extrapolates before committing to the full run.**
 - **Cognee API drift** (fast releases). → pin the version; wrap the client behind a thin `qnoe` interface so upgrades are localized.
 - **Vector duplication / embedding-space match.** → share the nomic embedder (serve OAI-compatible, dim 768); namespace `cognee_*`; accept chunk-vs-entity duplication.
 - **Dep conflicts.** → separate venv.
