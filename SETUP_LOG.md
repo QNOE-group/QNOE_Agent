@@ -1618,3 +1618,29 @@ Executed [[CONTEXT_BLOCK_TRACKING_PLAN]] end-to-end in one session (commits a0b8
 - **Open ride-alongs:** first production report line (07-17 ~07:00); first real memory_entry
   event; delete .bak-pre-tally after soak. Decision rationale: [[memory/decisions#D19]].
   Concurrent-session git trap hit + documented: [[memory/mistakes#M57]].
+
+## 2026-07-16/17 — FULL SERVER RE-INGEST (M58 closed) — COMPLETE
+
+**The big one.** Recovered the silent ~2/3-unindexed server document corpus ([[memory/mistakes#M58]]:
+ACL-denied `/ICFO` mount + un-propagated M7 find-timeout). One-time full re-ingest reading the
+broad `/mnt/noe` mount, storing `/ICFO` paths. Full design + operational lessons:
+[[memory/ingestion#Full server re-ingest]]; plan [[FULL_SERVER_INGEST_PLAN]].
+
+- **Ran 2026-07-16 14:33 → 2026-07-17 20:56 (~30 h)**, vLLM OFF / agent down the whole window.
+  `1215/1215 batches, 4 failed` (batch OOMs, self-handled). **Coverage 48,879/48,564 = 101%**
+  (every present file + legacy manifest rows). Per-folder acceptance: all ≥80% except
+  `Presentations` 26/33 (79%) → straggler sweep.
+- **New machinery (committed):** `agent/ingest/parallel_server_ingest.py` (memory-gated semaphore,
+  NOT ProcessPool — a pool worker ballooned 31 GB→OOM), `scripts/run_full_server_ingest.sh`,
+  `scripts/coverage_audit.py` (per-folder present-vs-indexed, <80% flag — the reconciliation M58
+  lacked), `scripts/coverage_gap.sh`. Speed stack ~5×: `PDF_TEXTLAYER_FAST` / `INGEST_STAGE_LOCAL`
+  / `INGEST_SKIP_IF_INDEXED`.
+- **Operational:** floor tuned live 50→35 (throttle fix, resumable relaunch); bottleneck found to be
+  CPU + thread oversubscription (loadavg 443/20 cores — more workers would *slow* it; thread-cap is
+  the real lever); DGX-side `sprint_watchdog.sh` + `sprint_status_logger.sh` self-healing (session
+  timers kept getting harness-killed); accidental vLLM start mid-run caused no damage.
+- **Wind-down (in progress):** straggler sweep (running) → final coverage_audit → `systemctl start
+  vllm.service` → restore crontab (`#SPRINT-SKIP` lines, backup `crontab.bak-sprint-20260716`) →
+  fix CavityQED stored paths /mnt/noe→/ICFO via `--refresh-find`.
+- **Standing TODO:** wire `coverage_audit.py` into the nightly report; point the nightly scan at
+  `/mnt/noe` (normalization + Notebook special-case) so this silent-gap class can't recur.

@@ -1,5 +1,5 @@
 # Ingestion & RAG Pipeline
-*Last updated: 2026-07-16 (SP coverage audit run — noe-group General at 53%; + full server re-ingest via /mnt/noe)*
+*Last updated: 2026-07-17 (full server re-ingest COMPLETE — 101% coverage, M58 closed; SP coverage audit run — noe-group General at 53%)*
 
 > File discovery, chunking, embedding, Qdrant indexing, watcher daemon, QCoDeS scanner.
 > Watcher design: [[WATCHER_PLAN]] · Repo mapping: [[REPO_MAPPING]] · Memory design: [[INFERENCE_MEMORY]]
@@ -26,6 +26,17 @@
 **Ran as a sprint with vLLM OFF (D-note):** vLLM (gpt-oss-120b, 4×64K KV) holds ~92GB RAM; coexisting with ingest workers (~11GB each) throttled the semaphore to ~0.6 files/min (~48 days). Verdict: **stop vLLM, sprint the ingest (~1 day), agent down meanwhile** — cleaner than a fortnight of degraded coexistence. (I mis-stated vLLM's footprint three times before measuring it — measure `free -g` with the service up, don't trust memory of it.)
 
 **Acceptance + standing check:** `scripts/coverage_audit.py` — per-folder PRESENT (via `/mnt/noe` find-cache) vs INDEXED (manifest under `/ICFO`), flags <80%. `--json`/`--line`. Run it after the sprint as the acceptance test (want all folders ≥ threshold); **STILL OPEN** — wire it into the nightly report (standing check, like the context-block tally) + point the ongoing nightly scan at `/mnt/noe` (with `/ICFO` normalization + Notebook special-case). `scripts/coverage_gap.sh` = the raw ACL-diff (`comm -12` of `/ICFO` unreadable vs `/mnt/noe` readable) that first quantified the gap.
+
+### RESULTS — COMPLETE (2026-07-17 20:56)
+
+**Ran 2026-07-16 14:33 → 2026-07-17 20:56 (~30 h wall).** `1215/1215 batches, 4 failed` (batch-level OOMs, self-handled — never lost, swept after). **Coverage: 48,879 / 48,564 = 101%** — every present file indexed + legacy/duplicate manifest rows (indexed > present because "present" is the *filtered* find-cache while the manifest also carries pre-exclusion `.txt`/Notebook rows and path-variant dupes from older nightlies). **Per-folder acceptance: all folders ≥80% except `Presentations` 26/33 (79%)** — 7-file residual (oversized/unsupported or the OOM-deferred tail); addressed by the straggler sweep (`re-run, cache reused` → skip-if-indexed fast-forwards the 48K, re-processes only the un-done). Recovered the corpus from ~1/3 → effectively complete (M58 closed).
+
+**Operational lessons (reusable for SP + future big ingests):**
+- **Floor is a live tuning dial, not set-and-forget.** Started `MIN_FREE_GB=50`; Qdrant's growing in-RAM footprint pushed baseline available under 50 → semaphore throttled to ~1 worker (~4× slowdown). Dropped to **35** (relaunch, resumable) → back to ~5–8 workers. Trade: 35 GB headroom occasionally < a Docling balloon → **4 batch OOMs total over ~30 h, all self-handled** (orchestrator never died, watchdog never fired). Raising the floor alone risks *stalling* (workers can't launch); the better escalation lever on repeated OOM is **fewer workers** (lowers peak), which is what the watchdog does.
+- **The bottleneck is CPU + thread oversubscription, NOT worker count.** At 8 workers: `user=98%, idle=0%, iowait=0%`, **loadavg 443 on a 20-core box** — each worker's torch/onnxruntime/BLAS grabs all cores, so hundreds of threads thrash 20 cores. **More workers = slower.** The real speed lever for next time: **cap threads per worker** (`OMP_NUM_THREADS=2` etc.) so 8 workers × ~2–3 threads ≈ matches core count. (Not applied mid-run at 80% — bake into the launcher for SP/future.)
+- **DGX-side self-healing beats session-side monitoring.** Interactive background timers kept getting harness-killed, so monitoring + auto-recovery were moved onto the box: `sprint_watchdog.sh` (5-min loop, relaunches on orchestrator death with escalating fewer-workers/higher-floor, self-exits on completion) + `sprint_status_logger.sh` (hourly `coverage/oom/mem` line to `sprint_status.log`). Pattern to reuse for any long unattended job. Both self-exit on `Parallel ingest complete`.
+- **vLLM must stay OFF for the whole window** — an accidental `systemctl start vllm.service` mid-run (another agent) exited clean with **no damage** (llama.cpp mmaps, was stopped fast) but ~92 GB would collide instantly with ingest. Nightly cron (`02:00 nightly_run`, `07:00 post_report`) commented out in yzamir's crontab (`#SPRINT-SKIP`, backup `crontab.bak-sprint-20260716`) for the duration.
+- **Wind-down order:** straggler sweep (vLLM off) → final `coverage_audit` → `sudo systemctl start vllm.service` → restore crontab (`crontab -l | sed 's/^#SPRINT-SKIP //' | crontab -`). Then fix CavityQED stored paths (/mnt/noe→/ICFO) via `--refresh-find`.
 
 ## Ingestion CLI
 
