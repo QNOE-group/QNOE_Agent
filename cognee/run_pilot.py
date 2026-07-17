@@ -22,10 +22,12 @@ import os
 import sys
 
 os.environ.setdefault("ENABLE_BACKEND_ACCESS_CONTROL", "false")
+os.environ.setdefault("COGNEE_SKIP_CONNECTION_TEST", "true")  # cognee's 30s test is over-eager
 
 DATA = os.environ.get("COGNEE_DATA", "/home/yzamir/cognee-pilot/data")
 LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "http://localhost:8000/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-oss-120b")
+# litellm needs the provider prefix so it routes to the OpenAI provider + our api_base
+LLM_MODEL = os.environ.get("LLM_MODEL", "openai/gpt-oss-120b")
 VECTOR_PROVIDER = os.environ.get("VECTOR_DB_PROVIDER", "lancedb")
 EFFORT = os.environ.get("REASONING_EFFORT", "high")
 
@@ -37,8 +39,12 @@ def configure():
     import cognee
     cognee.config.system_root_directory(os.path.join(DATA, "system"))
     cognee.config.data_root_directory(os.path.join(DATA, "data"))
-    # LLM — local llama.cpp, OpenAI-compatible
-    cognee.config.set_llm_provider("openai")
+    # LLM — local llama.cpp (OpenAI-compatible). Use the CUSTOM provider ->
+    # GenericAPIAdapter, which defaults to instructor json_mode. gpt-oss +
+    # llama.cpp emit multiple tool_calls under the openai adapter's
+    # json_schema_mode ("Instructor does not support multiple tool calls");
+    # plain json_mode avoids that.
+    cognee.config.set_llm_provider(os.environ.get("LLM_PROVIDER", "custom"))
     cognee.config.set_llm_model(LLM_MODEL)
     cognee.config.set_llm_endpoint(LLM_ENDPOINT)
     cognee.config.set_llm_api_key("sk-local")
@@ -94,19 +100,22 @@ async def export_graph(out_prefix: str):
 
 async def run(args):
     import cognee
-    from ontology import QKnowledgeGraph, CUSTOM_PROMPT
+    from cognee.shared.data_models import KnowledgeGraph
+    from ontology import CUSTOM_PROMPT
     if args.prune:
         await cognee.prune.prune_data()
         await cognee.prune.prune_system(metadata=True)
         logger.info("pruned prior data/system")
     docs = [json.loads(l) for l in open(args.docs, encoding="utf-8")]
+    if args.contains:
+        docs = [d for d in docs if args.contains.lower() in d.get("item_path", "").lower()]
     if args.limit:
         docs = sorted(docs, key=lambda d: d["chars"])[: args.limit] if args.smallest else docs[: args.limit]
     logger.info("adding %d docs (dataset=%s)", len(docs), args.dataset)
     for d in docs:
         await cognee.add(d["text"], dataset_name=args.dataset)
     logger.info("cognify (graph_model=QKnowledgeGraph, effort=%s) …", EFFORT)
-    await cognee.cognify(datasets=[args.dataset], graph_model=QKnowledgeGraph,
+    await cognee.cognify(datasets=[args.dataset], graph_model=KnowledgeGraph,
                          custom_prompt=CUSTOM_PROMPT)
     await export_graph(args.out)
 
@@ -116,6 +125,7 @@ def main(argv):
     ap.add_argument("--docs", default="output/qtm_docs.jsonl")
     ap.add_argument("--dataset", default="qtom_pilot")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--contains", default="", help="only docs whose item_path contains this substring")
     ap.add_argument("--smallest", action="store_true", help="pick the smallest docs (fast smoke)")
     ap.add_argument("--prune", action="store_true")
     ap.add_argument("--out", default="output/qtm_graph")

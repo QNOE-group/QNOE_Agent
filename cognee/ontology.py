@@ -70,3 +70,19 @@ Rules:
 - Ground every node in the text; do NOT invent concepts, numbers, or relationships not supported by the source.
 - Give each node a stable lowercase-slug id and reuse it for the same entity across documents.
 """
+
+import typing as _t
+
+# The prescribed ontology is enforced via the prompt (cognee 0.5.6's pipeline
+# only ingests its DEFAULT KnowledgeGraph, whose Node.type is a free string) —
+# so we tell the extractor EXACTLY which `type` / `relationship_name` strings to
+# use. The QKnowledgeGraph classes above are kept for reference/validation.
+_NODE_VALS = list(_t.get_args(NodeType))
+_REL_VALS = list(_t.get_args(RelName))
+CUSTOM_PROMPT += (
+    "\n\nUse ONLY these node `type` values (verbatim): "
+    + ", ".join(_NODE_VALS)
+    + ".\nUse ONLY these `relationship_name` values (verbatim): "
+    + ", ".join(_REL_VALS)
+    + ".\nDo not create any other node type or relationship name.\n"
+)
