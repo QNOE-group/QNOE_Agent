@@ -74,11 +74,9 @@ def configure():
         except Exception as e:  # pragma: no cover
             logger.warning("qdrant adapter import: %s", e)
         cognee.config.set_vector_db_url(os.environ.get("QDRANT_URL", "http://localhost:6333"))
-    # reasoning_effort:high — best-effort (0.5.6 forwards extra llm config to litellm)
-    try:
-        cognee.config.set_llm_config({"reasoning_effort": EFFORT, "max_tokens": 8192})
-    except Exception as e:
-        logger.warning("set_llm_config(reasoning_effort) not accepted: %s", e)
+    # NOTE effort:high is NOT wired — the llama.cpp server does not honor
+    # per-request reasoning_effort (baked low) and cognee 1.4.0 rejects it in
+    # config. Getting high effort needs a server-side restart (user decision).
     # point graph extraction at OUR ontology prompt (mutate the config singleton
     # directly — there is no set_graph_prompt_path helper)
     from cognee.infrastructure.llm.config import get_llm_config
