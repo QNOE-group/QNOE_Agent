@@ -99,8 +99,20 @@ def configure():
     # point graph extraction at OUR ontology prompt (mutate the config singleton
     # directly — there is no set_graph_prompt_path helper)
     from cognee.infrastructure.llm.config import get_llm_config
-    get_llm_config().graph_prompt_path = GRAPH_PROMPT
-    logger.info("graph_prompt_path -> %s", GRAPH_PROMPT)
+    llm_cfg = get_llm_config()
+    llm_cfg.graph_prompt_path = GRAPH_PROMPT
+    # CLIENT TIMEOUT — critical at high reasoning effort. litellm's default is
+    # 600s; at effort:high a single extraction generates 10-11K reasoning
+    # tokens ≈ 9-10+ min under 4-slot concurrency, so EVERY call straddles the
+    # timeout: the client aborts + retries, llama keeps generating into the
+    # void, and the run makes zero progress while pinning the LLM (observed
+    # 2026-07-20: 50 completed server-side generations, 0 rows in
+    # session_model_usage/nodes/edges after 50 min). llm_args is plumbed
+    # straight into the litellm completion kwargs.
+    llm_cfg.llm_args = {**(llm_cfg.llm_args or {}),
+                        "timeout": int(os.environ.get("LLM_CLIENT_TIMEOUT", "3600"))}
+    logger.info("graph_prompt_path -> %s ; llm client timeout -> %ss",
+                GRAPH_PROMPT, llm_cfg.llm_args["timeout"])
 
 
 STRUCT_TYPES = {"DocumentChunk", "TextSummary", "TextDocument", "EntityType", "TextChunk", "NodeSet"}
