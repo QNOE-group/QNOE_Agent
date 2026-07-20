@@ -12,11 +12,15 @@ Consumes the live-item inventory `logs/sp_live_items.jsonl` written by
 site) — no second 45-min Graph listing needed. A site absent from the dump is
 skipped entirely (a partial dump must never look like mass deletion).
 
-Two removal classes:
+Removal classes:
   * orphans          — manifest item_id not among the site's live item ids
   * excluded junk    — item_path matches EXCLUDE_PATH_SUBSTRINGS (e.g.
                        .ipynb_checkpoints/ rows indexed before the exclusion
                        landed; M56 lineage) — only with --purge-excluded
+  * extension purge  — --purge-ext .txt: rows whose item_path ends with the
+                       extension (legacy rows from before an extension was
+                       dropped from SUPPORTED_EXTENSIONS; D21 #3). This mode
+                       needs NO live dump — orphan detection is skipped.
 
 Dry-run by default; --execute deletes (after backing up sharepoint.db).
 Run as yzamir (same uid as the manifest writers — no cross-UID WAL, M52):
@@ -80,41 +84,55 @@ def main(argv) -> int:
     ap.add_argument("--execute", action="store_true", help="actually delete (default: dry-run)")
     ap.add_argument("--purge-excluded", action="store_true",
                     help="also purge rows matching EXCLUDE_PATH_SUBSTRINGS")
+    ap.add_argument("--purge-ext", metavar="EXT",
+                    help="extension-purge mode (e.g. '.txt'): target rows whose "
+                         "item_path ends with EXT; the live dump is NOT read and "
+                         "orphan detection is SKIPPED")
     ap.add_argument("--force-stale-dump", action="store_true",
                     help="accept a dump older than 48h")
     args = ap.parse_args(argv)
 
-    age_h = (time.time() - os.path.getmtime(args.dump)) / 3600
-    if age_h > MAX_DUMP_AGE_H and not args.force_stale_dump:
-        print(f"ABORT: dump is {age_h:.0f}h old (> {MAX_DUMP_AGE_H}h) — rerun the "
-              f"coverage audit with --dump-live, or pass --force-stale-dump")
-        return 2
-    live = load_live(args.dump)
-    print(f"live dump: {args.dump} ({age_h:.1f}h old) — "
-          + ", ".join(f"{s}: {len(ids)}" for s, ids in live.items()))
+    if args.purge_ext:
+        live = {}
+        print(f"extension-purge mode: {args.purge_ext} "
+              f"(dump not read, orphan detection skipped)")
+    else:
+        age_h = (time.time() - os.path.getmtime(args.dump)) / 3600
+        if age_h > MAX_DUMP_AGE_H and not args.force_stale_dump:
+            print(f"ABORT: dump is {age_h:.0f}h old (> {MAX_DUMP_AGE_H}h) — rerun the "
+                  f"coverage audit with --dump-live, or pass --force-stale-dump")
+            return 2
+        live = load_live(args.dump)
+        print(f"live dump: {args.dump} ({age_h:.1f}h old) — "
+              + ", ".join(f"{s}: {len(ids)}" for s, ids in live.items()))
 
     conn = sqlite3.connect(SP_MANIFEST_DB)
     rows = conn.execute(
         "SELECT item_id, item_path, site_name, collection, point_ids FROM sp_manifest"
     ).fetchall()
 
-    orphans, junk = [], []
+    ext = (args.purge_ext or "").lower()
+    orphans, junk, ext_rows = [], [], []
     for item_id, path, site, coll, pids in rows:
-        if any(p in path for p in EXCLUDE_PATH_SUBSTRINGS):
+        if ext and path.lower().endswith(ext):
+            ext_rows.append((item_id, path, site, coll, pids))
+        elif any(p in path for p in EXCLUDE_PATH_SUBSTRINGS):
             junk.append((item_id, path, site, coll, pids))
         elif site in live and item_id not in live[site]:
             orphans.append((item_id, path, site, coll, pids))
-    skipped_sites = {r[2] for r in rows} - set(live)
-    if skipped_sites:
-        print(f"sites NOT in dump (skipped, not counted as orphans): {skipped_sites}")
+    if not args.purge_ext:
+        skipped_sites = {r[2] for r in rows} - set(live)
+        if skipped_sites:
+            print(f"sites NOT in dump (skipped, not counted as orphans): {skipped_sites}")
 
     print(f"manifest rows: {len(rows)} | orphans: {len(orphans)} | "
+          f"ext-matches: {len(ext_rows)} | "
           f"excluded-junk: {len(junk)} ({'will purge' if args.purge_excluded else 'ignored without --purge-excluded'})")
-    for label, group in (("orphan", orphans[:8]), ("junk", junk[:5])):
+    for label, group in (("orphan", orphans[:8]), ("ext", ext_rows[:5]), ("junk", junk[:5])):
         for _, path, site, _, _ in group:
             print(f"  sample {label}: [{site}] {path[:120]}")
 
-    targets = orphans + (junk if args.purge_excluded else [])
+    targets = orphans + ext_rows + (junk if args.purge_excluded else [])
     if not args.execute:
         print(f"DRY-RUN: would delete {len(targets)} rows + their Qdrant points. "
               f"Re-run with --execute.")
@@ -144,7 +162,8 @@ def main(argv) -> int:
     left = conn.execute("SELECT COUNT(*) FROM sp_manifest").fetchone()[0]
     conn.close()
     print(f"DONE: deleted {cur.rowcount} manifest rows "
-          f"({len(orphans)} orphans, {len(junk) if args.purge_excluded else 0} junk) "
+          f"({len(orphans)} orphans, {len(ext_rows)} ext, "
+          f"{len(junk) if args.purge_excluded else 0} junk) "
           f"+ {deleted_pts} Qdrant points | rows remaining: {left}")
     stats = Counter(t[2] for t in targets)
     print("by site:", dict(stats))

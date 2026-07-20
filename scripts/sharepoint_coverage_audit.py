@@ -33,6 +33,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -59,6 +60,24 @@ logger = logging.getLogger("sp_coverage_audit")
 SUPPORTED_EXTENSIONS = {".py", ".ipynb", ".md", ".rst", ".pdf", ".pptx", ".docx"}
 EXCLUDE_PATH_SUBSTRINGS = {".env/", "/venv/", "site-packages/", "node_modules/",
                            "__pycache__/", ".ipynb_checkpoints/"}
+
+# Mirror of agent/ingest/sharepoint_sync.py `is_plot_class` (D21 #2) — keep in
+# lockstep. Plot-export/figure PDFs have no text layer; the sync skips them, so
+# the audit must not count them as present or `General` flags <80% forever.
+SP_EXCLUDE_PLOT_CLASS = os.environ.get("SP_EXCLUDE_PLOT_CLASS", "1") == "1"
+_NUMPLOT_RE = re.compile(r"^\d+(_\d+)?\.pdf$")
+# Word-boundary figure match — tightened from the forensics one-off, whose bare
+# substring test false-positived on e.g. "configure.pdf" / "reconfigure.pdf".
+_FIG_RE = re.compile(r"\bfigure|(?:^|[/_\-\s])figs?\b", re.IGNORECASE)
+
+
+def is_plot_class(rel_path: str) -> bool:
+    if not rel_path.lower().endswith(".pdf"):
+        return False
+    base = rel_path.rsplit("/", 1)[-1]
+    if "/pdf/" in rel_path or _NUMPLOT_RE.match(base):
+        return True
+    return bool(_FIG_RE.search(rel_path)) or base.lower().startswith("fig")
 
 SP_CONFIG_PATH = os.environ.get("SHAREPOINT_CONFIG", "/opt/qnoe-agent/config/sharepoint.yaml")
 SP_MANIFEST_DB = os.environ.get("SP_MANIFEST_DB", "/opt/qnoe-agent/memory/sharepoint.db")
@@ -158,6 +177,8 @@ def present_paths_for_drive(drive_id: str, site_cfg: dict, tok: _Token,
         if any(rel.startswith(e) for e in excludes):
             continue
         if any(p in rel for p in EXCLUDE_PATH_SUBSTRINGS):
+            continue
+        if SP_EXCLUDE_PLOT_CLASS and is_plot_class(rel):
             continue
         present.add(rel)
     return present

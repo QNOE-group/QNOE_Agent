@@ -15,6 +15,7 @@ import json
 import logging
 import multiprocessing
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -53,6 +54,30 @@ SUPPORTED_EXTENSIONS = {".py", ".ipynb", ".md", ".rst", ".pdf", ".pptx", ".docx"
 # scripts/sp_manifest_reingest.py and scripts/sp_orphan_sweep.py.
 EXCLUDE_PATH_SUBSTRINGS = {".env/", "/venv/", "site-packages/", "node_modules/",
                            "__pycache__/", ".ipynb_checkpoints/"}
+
+# Plot/figure-PDF class (decision D21 #2; forensics 2026-07-17): QCoDeS
+# notebook plot exports (`123.pdf`, `123_4.pdf`, `.../pdf/...`) and manuscript
+# figure PDFs — no text layer, near-zero retrieval value. ~9.3K of them kept
+# noe-group `General` permanently under the coverage threshold, turning the
+# nightly flag into noise. Excluded at sync AND audit so present/indexed stay
+# apples-to-apples — keep the copy in scripts/sharepoint_coverage_audit.py in
+# lockstep (M56: sync and audit must share filters). Definition mirrors
+# scripts/sp_manifest_reingest.py `_is_plot_class` (the forensics classifier).
+# Kill-switch: SP_EXCLUDE_PLOT_CLASS=0.
+SP_EXCLUDE_PLOT_CLASS = os.environ.get("SP_EXCLUDE_PLOT_CLASS", "1") == "1"
+_NUMPLOT_RE = re.compile(r"^\d+(_\d+)?\.pdf$")
+# Word-boundary figure match — tightened from the forensics one-off, whose bare
+# substring test false-positived on e.g. "configure.pdf" / "reconfigure.pdf".
+_FIG_RE = re.compile(r"\bfigure|(?:^|[/_\-\s])figs?\b", re.IGNORECASE)
+
+
+def is_plot_class(rel_path: str) -> bool:
+    if not rel_path.lower().endswith(".pdf"):
+        return False
+    base = rel_path.rsplit("/", 1)[-1]
+    if "/pdf/" in rel_path or _NUMPLOT_RE.match(base):
+        return True
+    return bool(_FIG_RE.search(rel_path)) or base.lower().startswith("fig")
 
 # Max seconds to spend chunking a single file (covers Docling PDF/DOCX/PPTX processing).
 FILE_CHUNK_TIMEOUT = int(os.environ.get("SP_FILE_CHUNK_TIMEOUT", "300"))
@@ -648,6 +673,8 @@ def _process_item(
         if rel_path.startswith(excl.lstrip("/")):
             return False
     if any(p in rel_path for p in EXCLUDE_PATH_SUBSTRINGS):
+        return False
+    if SP_EXCLUDE_PLOT_CLASS and is_plot_class(rel_path):
         return False
 
     item_id = item["id"]
