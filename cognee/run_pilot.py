@@ -226,7 +226,18 @@ async def run(args):
                     bi + 1, nbatches, len(batch), avail)
         for d in batch:
             await cognee.add(_strip_urls(d["text"]), dataset_name=args.dataset)
-        await cognee.cognify(datasets=[args.dataset], graph_model=KnowledgeGraph)
+        # Internal concurrency caps (cognee-native, researched 2026-07-20):
+        # cognify's own defaults are data_per_batch=20 concurrent docs and
+        # chunks_per_batch=100 chunks per task batch — the unbounded-fan-out /
+        # memory-balloon behavior we hit is those defaults, and the docs'
+        # memory-constrained guidance is exactly data_per_batch=2-5,
+        # chunks_per_batch=10-25. Outer batching (this loop) stays for the
+        # between-batch memory guard + resumable checkpoints.
+        await cognee.cognify(
+            datasets=[args.dataset], graph_model=KnowledgeGraph,
+            data_per_batch=int(os.environ.get("COGNIFY_DATA_PER_BATCH", "2")),
+            chunks_per_batch=int(os.environ.get("COGNIFY_CHUNKS_PER_BATCH", "10")),
+        )
         logger.info("batch %d/%d cognified (%d/%d docs done)",
                     bi + 1, nbatches, min((bi + 1) * bs, total), total)
     await export_graph(args.out)
