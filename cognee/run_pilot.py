@@ -168,6 +168,17 @@ async def export_graph(out_prefix: str):
     logger.info("exported %d entities / %d relations (clean) → %s.{json,md}", len(ent), len(sem), out_prefix)
 
 
+def _avail_gb() -> float:
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024 * 1024)
+    except Exception:
+        pass
+    return 999.0
+
+
 async def run(args):
     import cognee
     from cognee.shared.data_models import KnowledgeGraph
@@ -189,11 +200,35 @@ async def run(args):
                         len(big), args.max_chars, [d["item_path"][:40] for d in big])
     if args.limit:
         docs = sorted(docs, key=lambda d: d["chars"])[: args.limit] if args.smallest else docs[: args.limit]
-    logger.info("adding %d docs (dataset=%s)", len(docs), args.dataset)
-    for d in docs:
-        await cognee.add(_strip_urls(d["text"]), dataset_name=args.dataset)
-    logger.info("cognify (graph_model=KnowledgeGraph, our graph_prompt, effort=%s) …", EFFORT)
-    await cognee.cognify(datasets=[args.dataset], graph_model=KnowledgeGraph)
+
+    # BATCHED add+cognify — the whole-corpus single cognify() is pathological:
+    # cognee eagerly fans out a pipeline per document and holds every doc's
+    # in-flight state while the LLM stage crawls, so nothing materializes and
+    # RSS grows without backpressure (observed 2026-07-20: 1.3GB -> 26.5GB in
+    # ~70 min, 0 nodes, box nearly OOMed; same disease behind the Jul-18 melt).
+    # Small batches bound the fan-out, materialize the graph incrementally,
+    # and make the run resumable (cognee dedups adds and skips already-
+    # processed docs on the next cognify of the same dataset).
+    bs = args.batch_size
+    total = len(docs)
+    nbatches = (total + bs - 1) // bs
+    logger.info("processing %d docs in %d batches of <=%d (dataset=%s, effort=%s)",
+                total, nbatches, bs, args.dataset, EFFORT)
+    for bi in range(nbatches):
+        batch = docs[bi * bs:(bi + 1) * bs]
+        avail = _avail_gb()
+        if avail < args.min_free_gb:
+            logger.error("ABORT before batch %d/%d: %.0fGB RAM available < %.0fGB floor "
+                         "(run is resumable — rerun without --prune)",
+                         bi + 1, nbatches, avail, args.min_free_gb)
+            sys.exit(3)
+        logger.info("batch %d/%d: adding %d docs (%.0fGB RAM free) …",
+                    bi + 1, nbatches, len(batch), avail)
+        for d in batch:
+            await cognee.add(_strip_urls(d["text"]), dataset_name=args.dataset)
+        await cognee.cognify(datasets=[args.dataset], graph_model=KnowledgeGraph)
+        logger.info("batch %d/%d cognified (%d/%d docs done)",
+                    bi + 1, nbatches, min((bi + 1) * bs, total), total)
     await export_graph(args.out)
 
 
@@ -204,6 +239,12 @@ def main(argv):
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--contains", default="", help="only docs whose item_path contains this substring")
     ap.add_argument("--max-chars", type=int, default=0, help="skip docs larger than this (0=no cap)")
+    ap.add_argument("--batch-size", type=int,
+                    default=int(os.environ.get("COGNIFY_BATCH_SIZE", "8")),
+                    help="docs per add+cognify batch (bounds memory/fan-out)")
+    ap.add_argument("--min-free-gb", type=float,
+                    default=float(os.environ.get("COGNIFY_MIN_FREE_GB", "12")),
+                    help="abort (resumable) if available RAM drops below this before a batch")
     ap.add_argument("--smallest", action="store_true", help="pick the smallest docs (fast smoke)")
     ap.add_argument("--prune", action="store_true")
     ap.add_argument("--export-only", action="store_true", help="re-export existing graph, no cognify")
