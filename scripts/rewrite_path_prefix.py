@@ -36,6 +36,11 @@ def main(argv) -> int:
     ap.add_argument("--from-prefix", required=True)
     ap.add_argument("--to-prefix", required=True)
     ap.add_argument("--execute", action="store_true", help="apply (default: dry-run)")
+    ap.add_argument("--purge-conflicts", action="store_true",
+                    help="when the rewritten path already has a manifest row "
+                         "(the file was later re-ingested canonically), DELETE "
+                         "the stale source row and its Qdrant points instead of "
+                         "skipping it")
     args = ap.parse_args(argv)
 
     src = args.from_prefix.rstrip("/")
@@ -57,15 +62,28 @@ def main(argv) -> int:
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='missing_files'"
     ).fetchone() is not None
 
-    done = skipped = points = 0
+    done = skipped = purged = points = purged_points = 0
     for row_id, old_path, collection, point_ids_json in rows:
         new_path = dst + old_path[len(src):]
         conflict = conn.execute(
             "SELECT 1 FROM index_manifest WHERE file_path = ?", (new_path,)
         ).fetchone()
         if conflict:
-            print(f"  SKIP (canonical row already exists): {old_path}")
-            skipped += 1
+            ids = json.loads(point_ids_json or "[]")
+            if args.purge_conflicts:
+                print(f"  PURGE (canonical row exists; stale duplicate): {old_path}")
+                if args.execute:
+                    conn.execute("DELETE FROM index_manifest WHERE id = ?", (row_id,))
+                    if has_missing:
+                        conn.execute("DELETE FROM missing_files WHERE file_path = ?",
+                                     (old_path,))
+                    if ids:
+                        qc.delete(collection_name=collection, points_selector=ids)
+                purged += 1
+                purged_points += len(ids)
+            else:
+                print(f"  SKIP (canonical row already exists): {old_path}")
+                skipped += 1
             continue
         ids = json.loads(point_ids_json or "[]")
         if args.execute:
@@ -84,7 +102,9 @@ def main(argv) -> int:
         conn.commit()
     conn.close()
     mode = "REWROTE" if args.execute else "DRY-RUN would rewrite"
-    print(f"{mode} {done} row(s) ({points} Qdrant point(s)); {skipped} skipped.")
+    print(f"{mode} {done} row(s) ({points} Qdrant point(s)); "
+          f"purged {purged} stale duplicate row(s) ({purged_points} point(s)); "
+          f"{skipped} skipped.")
     return 0
 
 
