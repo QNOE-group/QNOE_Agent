@@ -77,6 +77,10 @@ DEFAULT_COLLECTIONS = ["group-wide", "qcodes-runs"]
 # emits these facts ahead of RAG chunks; sync_turn() writes new ones.
 
 MEM0_ENABLED = os.environ.get("MEM0_ENABLED", "1") == "1"   # kill-switch
+# Post-extraction write gate (memory_gate.py): drops lab-records / query-logs /
+# third-party facts that Mem0's extractor surfaces (M55/M47 class). Deterministic
+# post-filter on ADD results — NOT a prompt change. Default OFF until live-verified.
+MEM0_WRITE_GATE = os.environ.get("MEM0_WRITE_GATE", "0") == "1"
 MEM0_TOP_K = 3                                              # facts injected per turn
 MEM0_COLLECTION = "episodic_memory"
 # vLLM served model id used by Mem0 for fact extraction — confirm via
@@ -799,7 +803,7 @@ class QnoeRagProvider(MemoryProvider):
                 # utterance that produced the fact, so an audit/purge can see
                 # WHAT was said and delete by filter (qdrant delete by
                 # metadata) instead of the nuclear per-user wipe M47 forced.
-                _get_mem0().add(
+                result = _get_mem0().add(
                     [{"role": "user", "content": user_content}],
                     user_id=uid,
                     metadata={
@@ -809,6 +813,8 @@ class QnoeRagProvider(MemoryProvider):
                         "prov_v": 1,
                     },
                 )
+                if MEM0_WRITE_GATE:
+                    _apply_write_gate(result, uid)
             except Exception as e:
                 logger.warning("Mem0 add failed: %s", e)
 
@@ -863,6 +869,59 @@ class QnoeRagProvider(MemoryProvider):
     def shutdown(self) -> None:
         if self._prefetch_thread and self._prefetch_thread.is_alive():
             self._prefetch_thread.join(timeout=5.0)
+
+
+@lru_cache(maxsize=1)
+def _memory_gate():
+    """Load the sibling memory_gate module by path (same reason as
+    _grounding_validator: the plugin is loaded via importlib, so a normal
+    relative import isn't reliable)."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "memory_gate.py")
+    spec = importlib.util.spec_from_file_location("qnoe_memory_gate", path)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def _apply_write_gate(add_result, uid: str) -> None:
+    """Post-filter Mem0's extraction (MEMORY_ARCHITECTURE Part 6 item 2).
+
+    Mem0's add() returns the facts its extractor distilled, each with an
+    event: ADD (new memory), UPDATE or DELETE (it rewrote/removed an existing
+    one). New ADDs are classified by memory_gate.classify_fact(); anything
+    that is a lab record, a query-log, or third-party is deleted immediately
+    — before it can ever be recalled. UPDATE/DELETE events are only logged
+    (audit trail): they act on pre-existing memories, and deleting on a
+    rewrite could destroy a genuine older fact on a classifier false positive.
+    Runs inside sync_turn's daemon writer thread — never blocks the turn.
+    """
+    try:
+        results = (add_result or {}).get("results", []) or []
+    except AttributeError:       # unexpected shape (mem0 version drift)
+        logger.warning("memory_gate: unexpected add() result type %s",
+                       type(add_result).__name__)
+        return
+    for r in results:
+        event = (r.get("event") or "").upper()
+        fact = r.get("memory") or ""
+        mem_id = r.get("id")
+        if event != "ADD":
+            logger.info("memory_gate AUDIT uid=%s event=%s id=%s fact=%r",
+                        uid, event or "?", mem_id, fact[:200])
+            continue
+        verdict, reason = _memory_gate().classify_fact(fact)
+        if verdict == "drop" and mem_id:
+            try:
+                _get_mem0().delete(mem_id)
+                logger.info("memory_gate DROP uid=%s reason=%s id=%s fact=%r",
+                            uid, reason, mem_id, fact[:200])
+            except Exception as e:
+                logger.warning("memory_gate: delete(%s) failed: %s", mem_id, e)
+        else:
+            logger.info("memory_gate KEEP uid=%s reason=%s fact=%r",
+                        uid, reason, fact[:200])
 
 
 @lru_cache(maxsize=1)
