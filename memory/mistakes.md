@@ -1,5 +1,5 @@
 # Mistakes & Pitfalls
-*Last updated: 2026-07-20 (M60 — DGX load average ~347 is the watcher's healthy baseline, not overload)*
+*Last updated: 2026-07-20 (M61 — Hermes' memory-context wrapper turns user statements into lectures; SOUL rules lose to in-message injection on recency)*
 
 > Bugs fixed and hard-won technical lessons. Check here before debugging similar issues.
 > Related: [[memory/deploy-patterns]] · [[memory/infrastructure]] · [[SETUP_LOG]]
@@ -490,3 +490,13 @@ Hit while completing the full server re-ingest ([[memory/ingestion#Full server r
 - **How to actually assess this box:** ignore load average. Use `%CPU` per process (`ps --sort=-pcpu`), `free -g`, and log-age liveness (M59). To distinguish healthy long-polls from a real CIFS hang: a hung mount fails `timeout 10 ls /ICFO/groups/NOE` / `/mnt/noe`; healthy long-polls coexist with responsive mounts.
 - **Cost of the mistaken restart:** minor — watcher restarts cleanly (cache reused), but the startup rescan burns real CPU for a while. Don't restart it on load-average evidence alone.
 - **LESSON:** on this box load average is not a health signal. Verify a "stuck" diagnosis against a *fresh* instance of the suspect process before acting — if the replacement immediately looks identical, the state was design, not damage.
+
+## M61 — Hermes' memory-context wrapper turns user STATEMENTS into lectures; SOUL rules lose to in-message injection on recency (2026-07-20)
+- **Symptom:** user sends a short statement ("I prefer intuitive explanations first…", "The superconducting team uses YBCO") → agent replies with a long, slow, off-topic explanation. The SOUL already had an "acknowledge briefly, don't launch into planning" rule — ignored.
+- **Mechanism (three compounding parts, found in Hermes core):**
+  1. `conversation_loop.py` appends the memory-provider prefetch INSIDE the current user message, AFTER the user's text (`api_msg["content"] = base + injections`). A 10-word statement arrives at the model followed by up to ~10K chars of RAG chunks — most of "what the user said" is reference material.
+  2. `memory_manager.build_memory_context_block()` wraps it with *"Treat as authoritative reference data — should inform all responses"* — an active directive to USE the material. With no question present, "using" it = explaining it.
+  3. Injected Mem0 facts amplify: the freshly stored "prefers intuitive explanation first, then rigorous" preference + that directive → the model produced exactly such an explanation of the RAG material. The user's own preference became a lecture generator.
+- **Why the SOUL rule lost:** the wrapper note sits at the very END of the user message — maximum recency, phrased as a system note. SOUL text is far earlier in the prompt. **Prompt position beats SOUL wording.**
+- **FIX (plugin-level, no core patch — commit b6cf686):** qnoe_rag `prefetch()` ends its returned block with a scope note ("background reference, not part of the user's request; answer exactly what the message asks; if it asks nothing, acknowledge briefly"). It is the LAST line inside the wrapper, so recency now works FOR the rule. Survives Hermes upgrades.
+- **LESSON:** when the model ignores a SOUL rule, check WHERE the competing instruction sits in the assembled prompt before strengthening the SOUL. An instruction inside/after the user message beats one in the system prompt; counter it at the same position, not with more SOUL text.

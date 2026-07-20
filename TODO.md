@@ -1,5 +1,5 @@
 # QNOE Lab Agent — Master TODO
-*Last updated: 2026-07-20 (afternoon) — R11+M55 batch DEPLOYED + gateway restarted (misattribution validator, find_file stem fix, Mem0 provenance + write-gate ON-for-tuning, sample-params ON-for-tuning); nightly server sweep + coverage audit live (first run tonight 02:00); CavityQED paths fixed. Pending: Teams phone checks + redteam survey-confab (desktop).*
+*Last updated: 2026-07-20 (afternoon) — R11+M55 batch DEPLOYED + phone-round verified (run-159 ✓, find_file bare-stem ✓, write-gate 3 DROP/1 KEEP w/ provenance ✓); YBCO gate miss fixed same day (c8d2c95); lecture-mode root-caused → prefetch scope note (b6cf686, [[memory/mistakes#M61]]); nightly server sweep + coverage audit live (first run tonight 02:00); CavityQED paths fixed. Pending: statement re-test via Teams, desktop redteam survey-confab, desktop Teams HTML check.*
 
 > Claude Code memory: [[HOME]] · Migration tracker: [[memory/hermes-migration]] · Decisions: [[memory/decisions]]
 
