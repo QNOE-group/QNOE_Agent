@@ -1,11 +1,11 @@
 # QNOE Lab Agent — Master TODO
 *Last updated: 2026-07-20 (afternoon) — R11+M55 batch DEPLOYED + phone-round verified (run-159 ✓, find_file bare-stem ✓, write-gate 3 DROP/1 KEEP w/ provenance ✓); YBCO gate miss fixed same day (c8d2c95); lecture-mode root-caused → prefetch scope note (b6cf686, [[memory/mistakes#M61]]); nightly server sweep + coverage audit live (first run tonight 02:00); CavityQED paths fixed. Statement re-test ✅ (brief ack, no lecture — scope-note technique verified). Decision round DONE → [[memory/decisions#D21]] (7 items closed; 3 queued work items below). Pending: desktop redteam survey-confab, desktop Teams HTML check.*
 
-## Queued work (from the 2026-07-20 decision round, [[memory/decisions#D21]])
+## Queued work (from the 2026-07-20 decision round, [[memory/decisions#D21]]) — ALL DONE 2026-07-20 evening
 
-- [ ] **Exclude the no-text plot/figure PDF class** from SP sync + `sharepoint_coverage_audit.py` filters (the ~9,280 deliberately-skipped files in noe-group `General`) so the nightly `task_sp_coverage` flag becomes signal again. Mirror the exclusion in BOTH surfaces (M56 lesson: sync and audit must share filters).
-- [ ] **Purge the 1,831 legacy `.txt` manifest rows + their Qdrant chunks** — add an extension-purge mode (extend `sp_orphan_sweep.py` or `purge_stale_index.py`), backup manifest first, same pattern as the 7,719-row sweep.
-- [ ] **Inspect `QNOEAI` + `NOE-Group/Galleries` SharePoint sites read-only** (libraries, top folders, file counts) and present to user for the add/skip decision. Caveat noted: QNOEAI may be meta-content about the agent itself — indexing it could create self-referential RAG hits.
+- [x] **Plot/figure-PDF class excluded at sync + audit** ✅ (commit 1391cb0, deployed): `is_plot_class` in `sharepoint_sync.py` (canonical) + lockstep mirror in `sharepoint_coverage_audit.py` (audit deliberately doesn't import the heavy sync module). Env kill-switch `SP_EXCLUDE_PLOT_CLASS=0`. Figure-matching tightened to word boundaries — the forensics one-off's bare substring test would have eaten `configure.pdf` (15/15 unit cases incl. arXiv ids, theses, config docs). **Verify in tomorrow's nightly:** `General` coverage should clear the 80% flag (present shrinks by the ~9.3K skipped plots).
+- [x] **Legacy `.txt` rows purged** ✅: `sp_orphan_sweep.py --purge-ext` mode added (no live dump needed); dry-run → execute deleted **1,885 rows + 1,892 Qdrant points** (1,830 noe-group + 55 twisted-materials — SolidWorks PerformanceLogs/order notes). Backup `sharepoint.db.bak-pre-sweep-20260720`; 13,745 rows remain.
+- [x] **`QNOEAI` + `Galleries` sites inspected — BOTH EMPTY, decision resolved: SKIP** ✅. QNOEAI = the QNOE-Agent Teams team's own site (empty `Agent Logs` + `General` folders — the agent's infrastructure, would be self-referential anyway); `NOE-Group/Galleries` = empty Documents library. No config change; the tenant scan will keep listing them if they ever gain content.
 
 > Claude Code memory: [[HOME]] · Migration tracker: [[memory/hermes-migration]] · Decisions: [[memory/decisions]]
 
