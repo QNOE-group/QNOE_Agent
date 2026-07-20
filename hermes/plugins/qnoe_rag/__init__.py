@@ -754,7 +754,26 @@ class QnoeRagProvider(MemoryProvider):
             (query or "")[:80],
         )
 
-        return (mem_block + qcodes_block + findfile_block + rag_block) or ""
+        blocks = mem_block + qcodes_block + findfile_block + rag_block
+        if not blocks:
+            return ""
+        # Scope note — MUST be the last line of the injected block. Hermes core
+        # wraps this whole return in <memory-context> with a system note saying
+        # the material "should inform all responses", and appends it INSIDE the
+        # user's message, after their text. Observed live 2026-07-20: a 10-word
+        # user STATEMENT arrived at the model followed by ~10K chars of RAG
+        # chunks plus that directive, so the model lectured about the chunks
+        # (and the injected "prefers intuitive explanation first" memory fact
+        # turned the lecture intuitive-then-rigorous). The SOUL's acknowledge-
+        # briefly rule lost to the wrapper on recency. This note lands after
+        # everything, so recency works FOR the rule instead of against it.
+        return blocks + (
+            "\n[Scope note: everything above in this block is background "
+            "reference, not part of the user's request. Answer exactly what "
+            "the user's message asks, at matching length. If it asks nothing "
+            "— a statement, a preference, an FYI — acknowledge it briefly and "
+            "do not explain the reference material.]"
+        )
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         def _run():
