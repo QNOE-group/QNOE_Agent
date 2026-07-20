@@ -1,5 +1,5 @@
 # Decisions Log
-*Last updated: 2026-07-10*
+*Last updated: 2026-07-20 (D21 — user decision round)*
 
 > Architectural and design decisions with reasoning. Append new entries at the bottom.
 > Related: [[memory/mistakes]] · [[HANDOFF#All design decisions — summary]]
@@ -181,3 +181,14 @@ Alternatives rejected: re-scan-only (misses transient + per-turn reality), immed
 - **Interim Mem0 de-risk (before Cognee exists):** provenance metadata on every write (DONE, commit 00d2ba8) + a deterministic first-party/third-party **write-gate classifier** (`memory_gate.py`, 29/29 tests) as a **post-filter on Mem0's extracted facts** (hook, NOT prompt — prompt-guarding already failed at M55). Own-work-fact storage in Mem0 + the SOUL "memory is not a data source" relaxation are **DEFERRED until Cognee is the oracle** (no oracle → self-poisoning risk).
 - **Ontology review (2026-07-17):** added **Experiment** (Person×Sample×Setup — the cross-tier hinge carrying research intent); merged ResearchQuestion+ResearchDirection; folded Hypothesis into Project.
 Alternatives rejected: hand-rolled KG on Kùzu (user prefers a maintained framework); Mem0-only with prompt hygiene (M55 proved prompt-guarding insufficient); storing own-work lab facts in Mem0 now (unsafe without the Cognee oracle). Docs: [[MEMORY_ARCHITECTURE]] · [[COGNEE_PLAN]] · [[COGNEE_ONTOLOGY]] · [[KG_ONEPAGER]] (PI summary). Status: designed; Phase-0 pilot on QTM/QTOM next.
+
+## D21 — 2026-07-20 user decision round (seven standing items closed)
+
+**Decisions (Yuval, 2026-07-20):**
+1. **R10 SharePoint password: risk ACCEPTED, no rotation.** Exposure was into a now-redacted report + one Claude session; live path is B7-blocked and the harness is hardened (Channel-B + `_redact()`). Item closed.
+2. **No-text plot/figure PDFs (~9,280 in noe-group `General`): EXCLUDE the class** from SP sync + coverage-audit filters so `General`'s coverage number becomes meaningful (a permanent <80% flag would hide real regressions). → queued work.
+3. **1,831 legacy `.txt` manifest rows: PURGE** (extension-purge mode + Qdrant chunk deletion, backup first — same pattern as the 7,719-row sweep). → queued work.
+4. **`QNOEAI` + `NOE-Group/Galleries` tenant sites: INSPECT before deciding** — read-only listing of libraries/counts first. → queued work.
+5. **Core papers (D16 opt 1): already satisfied for QTM** — SharePoint `QTOM/Relevant papers/` (27 PDFs incl. Inbar et al. Nature 2023 + SI + follow-ups) exists and is indexed; QTM SOUL now points at it as the preferred core-literature source. Other sub-teams: when they onboard.
+6. **Web access (D16 opt 4): stays OFF; raise with Frank** — summary drafted for the PI; revisit with Phase-2 B4.
+7. **Cognee pilot relaunch: HOLD** — user wants to be present; fixed `run_pilot.py` stays repo-only until go.
