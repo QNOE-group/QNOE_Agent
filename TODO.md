@@ -35,6 +35,7 @@
 
 ## Backlog
 
+- [ ] **Watcher cache-rebuild floods the change queue (found 2026-07-21):** every watcher restart enqueues a mass of change events for UNCHANGED files (bursts of 2.4K-33K on Jun-23/26/30, Jul-6/9/10/14/15/20 — ~110K accumulated, never drained). Interim done: 110,103 pre-Jul-20-15h events bulk-marked `processed=2` (backup `watcher.db.bak-pre-purge-jul21`; safe — full re-ingest Jul-18 supersedes them), and the nightly queue task is now chunked/durable/hash-deduped (dd9e82b) so future floods are cheap. **Root fix:** the CacheRebuilder should compare mtime/size against the stored cache row and enqueue only real diffs. Also: the recurring identical 2,404-entry burst = one folder's deterministic rescan diff — identify it while in there.
 - [ ] **SP delta-sync design fixes (M47 root causes — the sweep/audit now *catch* what these drop, but the causes remain):** (a) fail-once=fail-forever — `_save_delta_link` advances the Graph delta token past failures; add a retry queue; (b) Docling `ProcessPoolExecutor` crash on back-to-back conversions silently skips the rest of a batch — recreate pool per file or a dedicated long-lived worker.
 - [ ] **Confirm `ingest_sp_qcodes.py` ran** (one-time ingest of SP-hosted QCoDeS `.db` files into `qcodes-runs`; run-once flag — check before running).
 - [ ] **I5c — verify SP delta sync appears in the nightly log** (poller-activity line shipped 2026-07-13; confirm it renders in a current report).
