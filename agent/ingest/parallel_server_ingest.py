@@ -88,6 +88,56 @@ def _folder_of(path: Path) -> str:
         return "?"
 
 
+MAX_SWEEP_ATTEMPTS = int(os.environ.get("SWEEP_MAX_ATTEMPTS", "3"))
+
+
+def _filter_tombstoned(manifest: str, files: list[Path]) -> list[Path]:
+    """Skip-tombstones for the permanent-failure residue (found night 2 of the
+    nightly sweep, 2026-07-23): ~668 files can NEVER gain a manifest row —
+    222 oversized 400-550MB pptx (size-guard skip writes no row) + Docling-
+    hostile PDFs — so --new-only re-queued and re-failed them EVERY night
+    (859→691→668, ~2h wasted + a failed batch nightly). Track attempts per
+    file in the manifest db; after MAX_SWEEP_ATTEMPTS with an UNCHANGED mtime,
+    stop retrying. An mtime change re-arms the file (a fixed/replaced file is
+    picked up again). Attempts are counted per sweep run, up front — a file
+    that succeeds gains a manifest row and simply leaves the new-list."""
+    conn = sqlite3.connect(manifest)
+    conn.execute("""CREATE TABLE IF NOT EXISTS sweep_attempts (
+                        file_path  TEXT PRIMARY KEY,
+                        attempts   INTEGER NOT NULL,
+                        mtime      REAL NOT NULL,
+                        last_at    TEXT NOT NULL)""")
+    prev = {r[0]: (r[1], r[2]) for r in
+            conn.execute("SELECT file_path, attempts, mtime FROM sweep_attempts")}
+    keep, dropped = [], 0
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    for p in files:
+        key = _store_key(p)
+        try:
+            mt = os.path.getmtime(p)
+        except OSError:
+            dropped += 1          # unstat-able — never going to ingest
+            continue
+        attempts, old_mt = prev.get(key, (0, mt))
+        if old_mt != mt:
+            attempts = 0          # file changed — give it fresh attempts
+        if attempts >= MAX_SWEEP_ATTEMPTS:
+            dropped += 1
+            continue
+        keep.append(p)
+        conn.execute("""INSERT INTO sweep_attempts (file_path, attempts, mtime, last_at)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(file_path) DO UPDATE SET
+                          attempts=excluded.attempts, mtime=excluded.mtime,
+                          last_at=excluded.last_at""",
+                     (key, attempts + 1, mt, now))
+    conn.commit()
+    conn.close()
+    logger.info("tombstones: %d files excluded (>=%d unchanged failed attempts); "
+                "%d proceed", dropped, MAX_SWEEP_ATTEMPTS, len(keep))
+    return keep
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Memory-gated parallel server ingest via /mnt/noe")
     ap.add_argument("--workers", type=int, default=int(os.environ.get("WORKERS", "6")),
@@ -122,6 +172,7 @@ def main() -> None:
         before = len(files)
         files = [p for p in files if _store_key(p) not in have]
         logger.info("--new-only: %d of %d files have no manifest row", len(files), before)
+        files = _filter_tombstoned(manifest, files)
     if args.limit:
         files = files[:args.limit]
     by_folder = Counter(_folder_of(p) for p in files)

@@ -668,6 +668,12 @@ def task_server_sweep() -> dict:
     proc = subprocess.run(cmd, capture_output=True, text=True,
                           timeout=170 * 60, env=env)
     out = (proc.stdout or "") + (proc.stderr or "")
+    # Persist the full sweep output — on night 2 a batch failed and its
+    # contents were unrecoverable because only parsed counters survived.
+    try:
+        (LOGS_DIR / "server_sweep.log").write_text(out, encoding="utf-8")
+    except OSError:
+        pass
     tail = "\n".join(out.strip().splitlines()[-15:])
     if proc.returncode != 0:
         raise RuntimeError(f"server sweep rc={proc.returncode}:\n{tail}")
@@ -677,6 +683,10 @@ def task_server_sweep() -> dict:
     if m:
         stats["new_files"] = int(m.group(1))
         stats["present_files"] = int(m.group(2))
+    m = re.search(r"tombstones: (\d+) files excluded.*; (\d+) proceed", out)
+    if m:
+        stats["tombstoned"] = int(m.group(1))
+        stats["attempting"] = int(m.group(2))
     m = re.search(r"progress: (\d+)/(\d+) batches \((\d+) failed\)(?!.*progress:)",
                   out, re.DOTALL)
     if m:
